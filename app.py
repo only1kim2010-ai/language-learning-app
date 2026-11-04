@@ -1,1269 +1,1112 @@
-# ============================================================
-# language app v2 - 북두칠성 발음 교정 앱 (Streamlit)
-# ------------------------------------------------------------
-# 영어 트랙 : 한국어 모국어 화자가 영어를 배울 때의 발음 오류
-# 일본어 트랙: 일본어 모국어 화자가 한국어 발음을 배울 때의 오류
-# 별 7개 = (오류 3개 x [개념·연습, 퀴즈]) + 최종 테스트
-# ============================================================
+# -*- coding: utf-8 -*-
+# 길라잡이 발음 교정 앱 - ① 시작 화면 · 홈 · 북두칠성 구조
+# 실행: 터미널에서  streamlit run app.py
 
-import difflib
+import base64
+import io
+import json
 import math
-import os
 import random
-import re
-import tempfile
+import struct
+import time
+import wave
+from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
 
+st.set_page_config(page_title="길라잡이", page_icon="⭐", layout="wide",
+                   initial_sidebar_state="collapsed")
 
-# ------------------------------------------------------------
-# 1. 페이지 설정
-# ------------------------------------------------------------
-st.set_page_config(page_title="language app", page_icon="🌌", layout="centered")
+# ------------------------------------------------------------------
+# 1. 기본 설정값
+# ------------------------------------------------------------------
+SAVE_FILE = Path(__file__).parent / "progress.json"   # 진행 상황 저장 파일
+BURGUNDY = "#7B1E2E"
+NAVY = "#0B1535"
+GOLD = "#FFD54A"
 
+LANG_NAMES = {"en": "영어", "ko": "한국어"}
+LANG_TITLES = {"en": "한국인을 위한 영어 발음 교실", "ko": "일본인을 위한 한국어 발음 교실"}
 
-# ------------------------------------------------------------
-# 2. 도우미: HTML을 안전하게 화면에 그리는 함수
-#    (빈 줄이 있으면 Streamlit이 HTML을 끊어 읽어서, 빈 줄과 들여쓰기를 제거)
-# ------------------------------------------------------------
-def html(text):
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    body = "\n".join(lines)
-    st.markdown("<div>\n" + body + "\n</div>", unsafe_allow_html=True)
-
-
-# ------------------------------------------------------------
-# 3. 전체 디자인(CSS) - 붉은색 컨셉
-# ------------------------------------------------------------
-html("""
-<style>
-.stApp {
-    background: radial-gradient(circle at 20% 0%, #3b0a14 0%, #14060a 55%, #0b0306 100%);
-}
-.hero {
-    background: linear-gradient(135deg, #b91c1c 0%, #e11d48 60%, #7f1d1d 100%);
-    border-radius: 22px; padding: 22px 26px; color: #fff; margin-bottom: 12px;
-    box-shadow: 0 10px 30px rgba(225, 29, 72, 0.25);
-}
-.hero h1 { margin: 0; font-size: 2rem; color: #fff; }
-.hero p { margin: 6px 0 0 0; opacity: 0.92; }
-.bigword { font-size: 2.6rem; font-weight: 800; color: #ff6b6b; line-height: 1.1; }
-.cap { text-align: center; color: #ffd0d0; font-weight: 700; margin-top: 4px; font-size: 0.95rem; }
-.note { text-align: center; color: #f5b5b5; font-size: 0.85rem; margin-bottom: 8px; }
-.dipper { max-width: 560px; margin: 0 auto 6px auto; }
-
-/* 북두칠성 별 */
-.star.lit { fill: #ff3b3b; filter: drop-shadow(0 0 8px #ff4d4d); animation: glow 2.4s ease-in-out infinite alternate; }
-.star.next { fill: #6b1a26; stroke: #ff8a8a; stroke-width: 1.5; stroke-dasharray: 3 2; animation: blink 1.3s ease-in-out infinite; }
-.star.off { fill: #3a1218; }
-@keyframes glow { from { opacity: 0.75; } to { opacity: 1; } }
-@keyframes blink { from { opacity: 0.4; } to { opacity: 1; } }
-
-/* 접촉 지점 표시 */
-.touch { fill: none; stroke: #ffd166; stroke-width: 3; stroke-dasharray: 4 3; animation: blink 1s infinite alternate; }
-
-/* 휴지 흔들림 (평음/격음/경음) */
-.tissue { transform-box: fill-box; transform-origin: 50% 0%; }
-.sway-weak { animation: swayweak 1.1s ease-in-out infinite alternate; }
-.sway-mid { animation: swaymid 0.9s ease-in-out infinite alternate; }
-.sway-strong { animation: swaystrong 0.6s ease-in-out infinite alternate; }
-@keyframes swayweak { from { transform: rotate(-1deg); } to { transform: rotate(1deg); } }
-@keyframes swaymid { from { transform: rotate(-7deg); } to { transform: rotate(7deg); } }
-@keyframes swaystrong { from { transform: rotate(-3deg); } to { transform: rotate(34deg); } }
-
-/* 숨 길이 막대 */
-.barrow { display: flex; align-items: center; gap: 10px; margin: 6px 0; color: #ffd0d0; }
-.barlabel { width: 120px; font-size: 0.9rem; }
-.bar { height: 16px; border-radius: 8px; background: linear-gradient(90deg, #e11d48, #ff6b6b); }
-
-/* 음절 글자 크기 시각화 */
-.syl-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,120,120,0.25);
-            border-radius: 16px; padding: 10px 16px; margin-bottom: 10px; }
-.syl-row { display: flex; align-items: baseline; gap: 4px; margin: 4px 0; flex-wrap: wrap; }
-.syl-tag { width: 110px; font-size: 0.8rem; color: #f5b5b5; }
-.syl-k { font-size: 28px; border: 1px dashed #7a3a44; border-radius: 8px; padding: 0 8px; color: #f5b5b5; }
-.syl-c { font-size: 18px; color: #e6a0a0; opacity: 0.8; }
-.syl-v { font-size: 54px; font-weight: 800; color: #ff4d4d; }
-
-/* 박자 + 노래방 가사 */
-.beat { display: inline-block; min-width: 70px; text-align: center; padding: 8px 10px; margin-right: 4px;
-        border-radius: 10px; background: #3a1218; color: #ffd0d0; font-size: 1.3rem; }
-.beat.k { background: #b91c1c; color: #fff; }
-.karaoke { display: inline-block; position: relative; font-size: 2rem; font-weight: 800; color: #6b3a44;
-           margin-right: 18px; }
-.karaoke span { position: absolute; left: 0; top: 0; overflow: hidden; white-space: nowrap; width: 0;
-                color: #ff4d4d; animation: fillup 1s linear forwards; }
-@keyframes fillup { from { width: 0; } to { width: 100%; } }
-
-table { color: #fde8e8; }
-</style>
-""")
-
-
-# ------------------------------------------------------------
-# 4. 음성 인식 부품 (브라우저의 Web Speech API 사용)
-#    - 🔊 듣기: 브라우저가 단어를 읽어 줌
-#    - 🎤 말하기: 마이크로 말하면 글자로 바꿔서 Python으로 전달
-#    - 말하는 동안 소리 파형이 심전도처럼 표시됨
-# ------------------------------------------------------------
-VOICE_HTML = """<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  body { margin: 0; font-family: sans-serif; color: #fde8e8; background: transparent; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; }
-  button { background: #e11d48; border: none; color: #fff; padding: 10px 16px; border-radius: 12px;
-           font-size: 15px; font-weight: 700; cursor: pointer; }
-  button.alt { background: #7f1d2e; }
-  button.rec { background: #ff4d4d; animation: pulse 1s infinite; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,77,77,.7); } 100% { box-shadow: 0 0 0 14px rgba(255,77,77,0); } }
-  #status { margin-top: 8px; font-size: 14px; min-height: 20px; color: #ffd0d0; }
-  canvas { width: 100%; height: 50px; margin-top: 6px; background: #1c070c; border-radius: 10px; }
-</style>
-</head>
-<body>
-<div class="row">
-  <button id="speak" class="alt">🔊 듣기</button>
-  <button id="mic">🎤 말하기</button>
-</div>
-<div id="status"></div>
-<canvas id="wave" width="400" height="50"></canvas>
-
-<script>
-  // ---- Streamlit과 통신하는 기본 함수 ----
-  function send(type, data) {
-    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
-  }
-  function setHeight() {
-    send("streamlit:setFrameHeight", { height: args.mode === "listen" ? 90 : 160 });
-  }
-
-  var args = { mode: "both", lang: "en-US", target: "", speak: "" };
-  var statusEl = document.getElementById("status");
-  var micBtn = document.getElementById("mic");
-  var speakBtn = document.getElementById("speak");
-  var canvas = document.getElementById("wave");
-  var ctx = canvas.getContext("2d");
-
-  window.addEventListener("message", function (event) {
-    var data = event.data;
-    if (data && data.type === "streamlit:render") {
-      args = Object.assign(args, data.args || {});
-      var listenOnly = (args.mode === "listen");
-      micBtn.style.display = listenOnly ? "none" : "inline-block";
-      canvas.style.display = listenOnly ? "none" : "block";
-      setHeight();
-    }
-  });
-  send("streamlit:componentReady", { apiVersion: 1 });
-
-  // ---- 듣기 ----
-  speakBtn.onclick = function () {
-    if (!("speechSynthesis" in window)) {
-      statusEl.textContent = "이 브라우저는 음성 재생을 지원하지 않아요.";
-      return;
-    }
-    var u = new SpeechSynthesisUtterance(args.speak || args.target);
-    u.lang = args.lang;
-    u.rate = 0.8;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(u);
-  };
-
-  // ---- 소리 파형 그리기 ----
-  var stream = null, audioCtx = null, rafId = null;
-
-  function drawWave(analyser) {
-    var buf = new Uint8Array(analyser.fftSize);
-    function loop() {
-      analyser.getByteTimeDomainData(buf);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.beginPath();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "#ff4d4d";
-      for (var i = 0; i < buf.length; i++) {
-        var x = i / buf.length * canvas.width;
-        var y = buf[i] / 255 * canvas.height;
-        if (i === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); }
-      }
-      ctx.stroke();
-      rafId = requestAnimationFrame(loop);
-    }
-    loop();
-  }
-
-  function stopWave() {
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
-    if (audioCtx) { audioCtx.close(); audioCtx = null; }
-  }
-
-  function startWave() {
-    // 파형은 보너스 기능이라, 실패해도 음성 인식은 계속됨
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
-      stream = s;
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      var src = audioCtx.createMediaStreamSource(s);
-      var analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 1024;
-      src.connect(analyser);
-      drawWave(analyser);
-    }).catch(function () {});
-  }
-
-  // ---- 말하기(음성 인식) ----
-  var recognizing = false;
-
-  micBtn.onclick = function () {
-    if (recognizing) { return; }
-    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      statusEl.textContent = "이 브라우저는 음성 인식을 지원하지 않아요. Chrome이나 Edge를 사용해 주세요.";
-      return;
-    }
-    var rec = new SR();
-    rec.lang = args.lang;
-    rec.interimResults = false;
-    rec.maxAlternatives = 5;
-    rec.continuous = false;
-
-    rec.onstart = function () {
-      recognizing = true;
-      micBtn.classList.add("rec");
-      statusEl.textContent = "듣고 있어요… 말해 보세요!";
-      startWave();
-    };
-    rec.onresult = function (e) {
-      var res = e.results[0];
-      var alts = [];
-      for (var i = 0; i < res.length; i++) {
-        alts.push({ text: res[i].transcript, conf: res[i].confidence });
-      }
-      statusEl.textContent = "인식 완료!";
-      send("streamlit:setComponentValue", { value: { alts: alts, t: Date.now() }, dataType: "json" });
-    };
-    rec.onerror = function (e) {
-      if (e.error === "no-speech") {
-        statusEl.textContent = "소리가 들리지 않았어요. 다시 눌러 주세요.";
-      } else if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        statusEl.textContent = "마이크 권한을 허용해 주세요. (주소창 왼쪽 자물쇠)";
-      } else {
-        statusEl.textContent = "오류: " + e.error;
-      }
-    };
-    rec.onend = function () {
-      recognizing = false;
-      micBtn.classList.remove("rec");
-      stopWave();
-    };
-    rec.start();
-  };
-</script>
-</body>
-</html>
-"""
-
-
-@st.cache_resource
-def get_voice_component():
-    """VOICE_HTML을 임시 폴더에 저장하고 Streamlit 부품으로 등록한다."""
-    folder = os.path.join(tempfile.gettempdir(), "language_app_voice_component")
-    os.makedirs(folder, exist_ok=True)
-    with open(os.path.join(folder, "index.html"), "w", encoding="utf-8") as f:
-        f.write(VOICE_HTML)
-    return components.declare_component("language_app_voice", path=folder)
-
-
-voice_box = get_voice_component()
-
-
-# ------------------------------------------------------------
-# 5. 시각자료 만들기 (SVG / HTML)
-# ------------------------------------------------------------
-
-# ----- 5-1. 북두칠성 -----
-# 별 1번 = 손잡이 끝(알카이드) ... 별 7번 = 국자 앞쪽(두베)
-STAR_POS = [(40, 70), (110, 95), (180, 118), (250, 138), (275, 205), (385, 215), (400, 148)]
-STAR_LINES = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 3)]
-
-
-def star_points(cx, cy, r_out, r_in):
-    """5각 별의 꼭짓점 좌표 문자열을 만든다."""
-    pts = []
-    for i in range(10):
-        ang = math.pi / 2 + i * math.pi / 5
-        r = r_out if i % 2 == 0 else r_in
-        pts.append(f"{cx + r * math.cos(ang):.1f},{cy - r * math.sin(ang):.1f}")
-    return " ".join(pts)
-
-
-def dipper_svg(done, labels):
-    nxt = next((i for i, d in enumerate(done) if not d), None)
-    rng = random.Random(7)
-    parts = ['<rect width="460" height="270" rx="18" fill="#12050a"/>']
-    # 배경의 작은 별들
-    for _ in range(45):
-        parts.append(
-            f'<circle cx="{rng.randint(5, 455)}" cy="{rng.randint(5, 265)}" '
-            f'r="{rng.choice([0.6, 0.9, 1.2])}" fill="#ffd0d0" opacity="0.35"/>'
-        )
-    # 별 사이의 선 (두 별이 모두 밝으면 밝은 선)
-    for a, b in STAR_LINES:
-        lit = done[a] and done[b]
-        color = "#ff5a5a" if lit else "#4a1a22"
-        width = 3 if lit else 1.5
-        (x1, y1), (x2, y2) = STAR_POS[a], STAR_POS[b]
-        parts.append(
-            f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{color}" stroke-width="{width}"/>'
-        )
-    # 별과 이름표
-    for i, (x, y) in enumerate(STAR_POS):
-        if done[i]:
-            cls = "star lit"
-        elif i == nxt:
-            cls = "star next"
-        else:
-            cls = "star off"
-        parts.append(f'<polygon class="{cls}" points="{star_points(x, y, 17, 7)}"/>')
-        parts.append(
-            f'<text x="{x}" y="{y + 36}" text-anchor="middle" font-size="11" fill="#f5b5b5">'
-            f'{i + 1}. {labels[i]}</text>'
-        )
-    return '<div class="dipper"><svg viewBox="0 0 460 270" style="width:100%;height:auto">' + "".join(parts) + "</svg></div>"
-
-
-# ----- 5-2. 혀 단면도 -----
-PALATE = "M 30 38 Q 58 28 68 54 Q 150 12 218 44 Q 265 66 278 125"
-TONGUE = {
-    "tap": "M 280 175 Q 195 168 135 136 Q 95 114 74 72",
-    "lateral": "M 280 175 Q 195 165 135 132 Q 96 108 74 70",
-    "r": "M 280 175 Q 205 170 160 135 Q 122 105 150 78",
-    "velar": "M 280 175 Q 235 152 220 112 Q 214 82 220 52",
-    "flat": "M 280 175 Q 200 180 120 172",
+# 별 7개 = 단계 7개 (오류 3개 x [개념, 연습] + 최종 테스트)
+STEPS = {
+    "en": ["자음 r/l 개념", "자음 r/l 연습", "모음 e/i 개념", "모음 e/i 연습",
+           "음절 개념", "음절 연습", "최종 테스트"],
+    "ko": ["자음 개념", "자음 연습", "모음 개념", "모음 연습",
+           "음절 개념", "음절 연습", "최종 테스트"],
 }
 
-
-def tongue_svg(tongue_key, caption, note="", touch=None, lips_closed=False):
-    lower_lip_y = 46 if lips_closed else 82
-    contact = ""
-    if touch:
-        contact = f'<circle class="touch" cx="{touch[0]}" cy="{touch[1]}" r="11"/>'
-    return f"""
-    <svg viewBox="0 0 300 200" style="width:100%;height:auto">
-    <rect width="300" height="200" rx="14" fill="#1c070c"/>
-    <path d="{PALATE}" fill="none" stroke="#f5b5b5" stroke-width="4" stroke-linecap="round"/>
-    <path d="{TONGUE[tongue_key]}" fill="none" stroke="#ff4d4d" stroke-width="14" stroke-linecap="round"/>
-    <rect x="8" y="30" width="26" height="14" rx="7" fill="#e11d48"/>
-    <rect x="8" y="{lower_lip_y}" width="26" height="14" rx="7" fill="#e11d48"/>
-    {contact}
-    </svg>
-    <div class="cap">{caption}</div>
-    <div class="note">{note}</div>
-    """
+# 북두칠성 별 위치 (viewBox 700 x 260 기준). 왼쪽 손잡이 끝 -> 오른쪽 국자 순서
+STAR_POS = [(50, 120), (150, 80), (250, 95), (350, 125), (450, 185), (550, 165), (650, 100)]
+LINES = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 3)]
 
 
-def viz_rl():
-    cols = st.columns(3)
-    items = [
-        ("tap", "오리의 ㄹ = 탄설음", "혀끝이 톡 한 번 치고 바로 내려와요", (76, 62)),
-        ("lateral", "달의 ㄹ = 영어 l", "혀끝을 붙인 채 공기는 양옆으로", (76, 62)),
-        ("r", "영어 r", "혀끝이 어디에도 닿지 않아요!", None),
-    ]
-    for col, (key, cap, note, touch) in zip(cols, items):
-        with col:
-            html(tongue_svg(key, cap, note, touch))
+# ------------------------------------------------------------------
+# 2. 저장 / 불러오기 (창을 닫아도 1시간 안에 돌아오면 이어하기)
+# ------------------------------------------------------------------
+def default_data():
+    return {
+        "done": {"en": [False] * 7, "ko": [False] * 7},
+        "count": {"en": 0, "ko": 0},          # 언어별 이수 횟수
+        "last_lang": None,
+        "last_step": None,
+        "last_time": 0,
+    }
 
 
-# ----- 5-3. 심전도 스타일 모음 그래프 (eat vs it) -----
-def viz_ecg():
-    html("""
-    <svg viewBox="0 0 640 300" style="width:100%;height:auto">
-    <defs>
-      <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
-        <path d="M20 0H0V20" fill="none" stroke="#5a1f2a" stroke-width="0.6"/>
-      </pattern>
-    </defs>
-    <rect width="640" height="300" rx="14" fill="#1c070c"/>
-    <rect width="640" height="300" rx="14" fill="url(#grid)"/>
-    <text x="16" y="24" font-size="13" fill="#ff6b6b">빨강 = 혀 높이 (위로 갈수록 높음)</text>
-    <text x="16" y="44" font-size="13" fill="#ffe3c2">살구색 = 입 벌림 (아래로 갈수록 크게 벌림)</text>
-    <polyline points="20,180 55,80 295,80 330,180" fill="none" stroke="#ff4d4d" stroke-width="4" stroke-linejoin="round"/>
-    <polyline points="20,225 55,208 295,208 330,225" fill="none" stroke="#ffe3c2" stroke-width="3" stroke-linejoin="round"/>
-    <text x="175" y="68" text-anchor="middle" font-size="13" fill="#ffd0d0">eat /iː/  길고 긴장, 혀 가장 높음</text>
-    <text x="40" y="272" font-size="40" font-weight="800" fill="#ff6b6b" textLength="270" lengthAdjust="spacingAndGlyphs">e a t</text>
-    <polyline points="360,180 385,110 520,110 545,180" fill="none" stroke="#ff4d4d" stroke-width="4" stroke-linejoin="round"/>
-    <polyline points="360,225 385,192 520,192 545,225" fill="none" stroke="#ffe3c2" stroke-width="3" stroke-linejoin="round"/>
-    <text x="452" y="98" text-anchor="middle" font-size="13" fill="#ffd0d0">it /ɪ/  짧고 이완, 입 조금 더 열림</text>
-    <text x="380" y="272" font-size="40" font-weight="800" fill="#ff6b6b" textLength="120" lengthAdjust="spacingAndGlyphs">it</text>
-    </svg>
-    """)
-    st.caption("그래프가 옆으로 길수록 소리도 길어요. eat는 it보다 약 2배 길게!")
+def load_data():
+    try:
+        return json.loads(SAVE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return default_data()
 
 
-def viz_e_table():
-    st.markdown(
-        """
-| 철자 | 예시 | 소리 | 한국어로 느끼면 |
-|---|---|---|---|
-| e | bed | /ɛ/ | ㅔ보다 입을 조금 더 벌려서 |
-| ee, ea | eat, feet | /iː/ | 길게 늘인 ㅣ |
-| 단어 끝 e | make | 소리 없음 (앞 모음이 길어짐) | 메이크 |
-| 약한 음절의 e | taken | /ə/ | 힘 빠진 "어" |
-"""
+def save_data():
+    try:
+        SAVE_FILE.write_text(json.dumps(st.session_state.data, ensure_ascii=False),
+                             encoding="utf-8")
+    except Exception:
+        pass  # 저장이 안 돼도 앱은 계속 동작해요
+
+
+ss = st.session_state
+if "data" not in ss:
+    ss.data = load_data()
+    ss.screen = "start"
+    ss.lang = "en"
+    ss.step = None
+    ss.resume = None        # (언어, 단계 번호) 이어하기 정보
+    d = ss.data
+    if d.get("last_step") is not None and time.time() - d.get("last_time", 0) < 3600:
+        ss.resume = (d["last_lang"], d["last_step"])
+
+
+# ------------------------------------------------------------------
+# 3. 버튼을 눌렀을 때 실행되는 함수들
+# ------------------------------------------------------------------
+def touch():
+    ss.data["last_time"] = time.time()
+    save_data()
+
+
+def go_start():
+    ss.screen = "start"
+
+
+def go_home():
+    if ss.get("fp"):
+        ss.fp = False
+        ss.screen = "finale"
+        return
+    if ss.resume and ss.screen == "start":
+        ss.lang = ss.resume[0]
+    ss.screen = "home"
+    touch()
+
+
+def set_lang(lang):
+    ss.lang = lang
+    ss.resume = None
+
+
+def open_step(i):
+    ss.step = i
+    ss.page, ss.pact, ss.pi, ss.ps, ss.rnd = 0, None, 0, {}, 0
+    ss.t, ss.rv = None, False
+    ss.resume = None
+    ss.data["last_lang"] = ss.lang
+    ss.data["last_step"] = i
+    ss.screen = "step"
+    touch()
+
+
+def finish_step():
+    lang, i = ss.lang, ss.step
+    ss.data["done"][lang][i] = True
+    if all(ss.data["done"][lang]):
+        ss.data["count"][lang] += 1                 # 이수 횟수 +1
+        ss.data["done"][lang] = [False] * 7         # 북두칠성 리셋
+        ss.data["last_step"] = None
+        ss.screen = "finale"
+    else:
+        ss.screen = "stepend"
+    if ss.get("rv") and ss.screen == "stepend":
+        ss.step, ss.screen = 6, "step"        # 복습 중이면 복습 목록으로 돌아가요
+    touch()
+
+
+def next_step():
+    if ss.step < 6:
+        open_step(ss.step + 1)
+    else:
+        go_home()
+
+
+def other_language():
+    ss.lang = "ko" if ss.lang == "en" else "en"
+    ss.resume = None
+    go_home()
+
+
+# ------------------------------------------------------------------
+# 4. 그림 만들기 (HTML / SVG)
+# ------------------------------------------------------------------
+def sky_html():
+    """밤하늘 배경: 깜빡이는 작은 별들"""
+    rnd = random.Random(7)
+    parts = []
+    for _ in range(90):
+        x, y = rnd.uniform(0, 100), rnd.uniform(0, 100)
+        size = rnd.choice([2, 2, 3, 4])
+        delay = rnd.uniform(0, 4)
+        color = rnd.choice(["#fff6c8", "#ffffff", "#ffe58a"])
+        parts.append(
+            f'<div class="tw" style="left:{x:.1f}%;top:{y:.1f}%;width:{size}px;'
+            f'height:{size}px;background:{color};box-shadow:0 0 {size * 3}px {color};'
+            f'animation-delay:{delay:.1f}s"></div>'
+        )
+    return "".join(parts)
+
+
+def bear_svg(size=90):
+    """임시 캐릭터: 날개 달린 곰 (나중에 실제 캐릭터로 교체)"""
+    svg = (
+        f'<svg width="{size}" height="{size}" viewBox="0 0 100 100">'
+        '<ellipse cx="14" cy="55" rx="17" ry="9" fill="#fff" stroke="#7B1E2E" '
+        'stroke-width="2" transform="rotate(-30 14 55)"/>'
+        '<ellipse cx="86" cy="55" rx="17" ry="9" fill="#fff" stroke="#7B1E2E" '
+        'stroke-width="2" transform="rotate(30 86 55)"/>'
+        '<circle cx="30" cy="28" r="10" fill="#8d5a3b"/>'
+        '<circle cx="70" cy="28" r="10" fill="#8d5a3b"/>'
+        '<circle cx="50" cy="55" r="30" fill="#a8704a"/>'
+        '<ellipse cx="50" cy="66" rx="12" ry="9" fill="#f1d3b3"/>'
+        '<circle cx="40" cy="50" r="3.5" fill="#222"/>'
+        '<circle cx="60" cy="50" r="3.5" fill="#222"/>'
+        '<ellipse cx="50" cy="62" rx="4" ry="3" fill="#222"/></svg>'
     )
+    return f'<div class="float" style="text-align:center">{svg}</div>'
 
 
-# ----- 5-4. 음절: 글자 크기 시각화 -----
-SYLLABLE_WORDS = [
-    ("speak", [("sp", 0), ("ea", 1), ("k", 0)], ["스", "피", "크"], 1),
-    ("street", [("str", 0), ("ee", 1), ("t", 0)], ["스", "트", "리", "트"], 1),
-    ("strike", [("str", 0), ("i", 1), ("ke", 0)], ["스", "트", "라", "이", "크"], 1),
-    ("desk", [("d", 0), ("e", 1), ("sk", 0)], ["데", "스", "크"], 1),
+def dipper_html(done, blink=None, all_lit=False, dark=False):
+    """북두칠성 SVG. done: 7개 True/False, blink: 반짝일 별 번호"""
+    line_off = "#3a4470" if dark else "#e6d6d9"
+    line_on = GOLD if dark else "#e0b84a"
+    star_off = "#8b93b8" if dark else "#c9b8bc"
+    parts = ['<svg viewBox="0 0 700 260" width="100%" style="max-height:34vh">']
+    for a, b in LINES:
+        lit = all_lit or (done[a] and done[b])
+        (x1, y1), (x2, y2) = STAR_POS[a], STAR_POS[b]
+        parts.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
+                     f'stroke="{line_on if lit else line_off}" stroke-width="3"/>')
+    for i, (x, y) in enumerate(STAR_POS):
+        lit = all_lit or done[i]
+        cls = "glow" if lit else ""
+        if blink == i:
+            cls += " blink"
+        parts.append(
+            f'<text x="{x}" y="{y + 18}" text-anchor="middle" font-size="56" '
+            f'class="{cls}" fill="{GOLD if lit else star_off}">★</text>'
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def inject_css(dark):
+    bg = NAVY if dark else "#FFFFFF"
+    text = "#FFFFFF" if dark else "#2b2b2b"
+    css = f"""
+    <style>
+    header, footer, #MainMenu {{visibility:hidden; height:0;}}
+    .stApp {{background:{bg};}}
+    .block-container {{padding-top:1rem; padding-bottom:0.5rem; max-width:1100px;
+                       position:relative; z-index:2;}}
+    h1,h2,h3,p,span,div,label {{color:{text};}}
+    .stButton>button {{background:{BURGUNDY}; color:#fff !important; border:none;
+                       border-radius:12px; padding:0.5rem 0.8rem; font-weight:600;}}
+    .stButton>button:hover {{background:#9a2a3d; color:#fff;}}
+    .stButton>button p {{color:#fff !important;}}
+    .tw {{position:fixed; border-radius:50%; z-index:1; pointer-events:none;
+          animation:tw 3s ease-in-out infinite;}}
+    @keyframes tw {{0%,100%{{opacity:.25}} 50%{{opacity:1}}}}
+    .float {{animation:fl 3s ease-in-out infinite;}}
+    @keyframes fl {{0%,100%{{transform:translateY(0)}} 50%{{transform:translateY(-8px)}}}}
+    .glow {{filter:drop-shadow(0 0 8px #ffd54a) drop-shadow(0 0 16px #ffd54a);}}
+    .blink {{animation:bl 0.8s ease-in-out infinite;}}
+    @keyframes bl {{0%,100%{{opacity:.3}} 50%{{opacity:1}}}}
+    .bubble {{background:#fdf0f2; border:2px solid {BURGUNDY}; border-radius:16px;
+              padding:0.6rem 1rem; color:{BURGUNDY} !important; font-weight:700;}}
+    .center {{text-align:center;}}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+    if dark:
+        st.markdown(sky_html(), unsafe_allow_html=True)
+
+
+def top_bar(title=""):
+    """모든 화면 왼쪽 위에 '홈으로' 버튼"""
+    c1, c2 = st.columns([1, 5])
+    c1.button("🏠 홈으로", on_click=go_home, key="home_btn", width="stretch")
+    if title:
+        c2.markdown(f"<h3 style='margin:0.3rem 0'>{title}</h3>", unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------------
+# 5. 화면들
+# ------------------------------------------------------------------
+def screen_start():
+    inject_css(dark=True)
+    st.markdown("<div style='height:9vh'></div>", unsafe_allow_html=True)
+    st.markdown(bear_svg(120), unsafe_allow_html=True)
+    st.markdown(
+        "<h1 class='center' style='font-size:2.6rem;margin:0.3rem 0'>✦ 한민고등학교 길라잡이 ✦</h1>"
+        "<p class='center' style='font-size:1.2rem;color:#ffe58a'>"
+        "북두칠성을 따라가는 발음 교정 여행</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(dipper_html([False] * 7, dark=True), unsafe_allow_html=True)
+    c = st.columns([2, 1, 2])
+    c[1].button("별 따라 시작하기", on_click=go_home, key="start_btn", width="stretch")
+
+
+def screen_home():
+    inject_css(dark=False)
+    d = ss.data
+    lang = ss.lang
+
+    # 맨 위: 제목, 이수 횟수, 언어 전환
+    c1, c2, c3 = st.columns([3, 3, 3])
+    c1.markdown(f"<h2 style='margin:0;color:{BURGUNDY}'>한민고 길라잡이</h2>"
+                f"<span>{LANG_TITLES[lang]}</span>", unsafe_allow_html=True)
+    if d["count"]["en"] + d["count"]["ko"] > 0:
+        c2.markdown(
+            f"<div class='bubble center'>이수 횟수 · 영어 {d['count']['en']}회 · "
+            f"한국어 {d['count']['ko']}회</div>", unsafe_allow_html=True)
+    other = "ko" if lang == "en" else "en"
+    c3.button(f"{LANG_NAMES[other]} 학습으로 이동", on_click=set_lang, args=(other,),
+              key="lang_btn", width="stretch")
+
+    # 이어하기 안내
+    blink = None
+    if ss.resume and ss.resume[0] == lang:
+        blink = ss.resume[1]
+        b1, b2 = st.columns([1, 6])
+        b1.markdown(bear_svg(70), unsafe_allow_html=True)
+        b2.markdown("<div class='bubble' style='margin-top:1rem'>"
+                    "종료한 시점의 단계입니다!</div>", unsafe_allow_html=True)
+    else:
+        st.markdown(bear_svg(70), unsafe_allow_html=True)
+
+    # 북두칠성 + 별 아래 단계 이름 버튼
+    st.markdown(dipper_html(d["done"][lang], blink=blink), unsafe_allow_html=True)
+    cols = st.columns(7)
+    for i, col in enumerate(cols):
+        col.button(f"{i + 1}. {STEPS[lang][i]}", on_click=open_step, args=(i,),
+                   key=f"star_{i}", width="stretch")
+    st.markdown("<p class='center' style='margin-top:0.6rem'>"
+                "별 아래 단계를 눌러 원하는 순서로 학습해요.</p>", unsafe_allow_html=True)
+
+
+def screen_step():
+    inject_css(dark=False)
+    lang, i = ss.lang, ss.step
+    ended = (i in (1, 3, 5) and ss.pact is not None and ss.pi >= len(ss.pact)) or \
+            (i == 6 and ss.get("t") is not None and ss.t["ph"] in ("res", "rev"))
+    if not ended:
+        top_bar(f"단계 {i + 1} · {STEPS[lang][i]}")
+    if i <= 5:
+        (render_en if lang == "en" else render_ko)(i)
+        return
+    render_test()
+    return
+    st.markdown(bear_svg(100), unsafe_allow_html=True)
+    st.markdown(
+        "<div class='bubble center' style='max-width:560px;margin:0.5rem auto'>"
+        "이 화면은 다음 단계(② 영어 / ③ 한국어)에서 실제 학습 내용으로 채워져요.</div>",
+        unsafe_allow_html=True)
+    st.markdown(dipper_html(ss.data["done"][lang], blink=i), unsafe_allow_html=True)
+    c = st.columns([2, 1, 2])
+    c[1].button("단계 완료 (임시)", on_click=finish_step, key="finish_btn", width="stretch")
+
+
+def screen_stepend():
+    inject_css(dark=False)
+    lang = ss.lang
+    st.markdown(bear_svg(100), unsafe_allow_html=True)
+    st.markdown("<h2 class='center' style='color:%s'>별이 하나 빛났어요! ✨</h2>" % BURGUNDY,
+                unsafe_allow_html=True)
+    st.markdown(dipper_html(ss.data["done"][lang]), unsafe_allow_html=True)
+    c = st.columns([1, 2, 2, 1])
+    c[1].button("홈으로 돌아가기", on_click=go_home, key="se_home", width="stretch")
+    c[2].button("학습 계속하기", on_click=next_step, key="se_next", width="stretch")
+
+
+def screen_finale():
+    inject_css(dark=True)
+    st.markdown("<h1 class='center' style='margin-top:2vh'>모든 별이 빛났어요! 🎉</h1>"
+                "<p class='center' style='color:#ffe58a'>북두칠성이 완성됐어요. 정말 수고했어요!</p>",
+                unsafe_allow_html=True)
+    st.markdown(bear_svg(90), unsafe_allow_html=True)
+    st.markdown(dipper_html([True] * 7, all_lit=True, dark=True), unsafe_allow_html=True)
+    st.markdown("<div style='height:4vh'></div>", unsafe_allow_html=True)
+    c = st.columns([6, 2, 2])   # 오른쪽 아래
+    c[1].button("시작 화면으로", on_click=go_start, key="fin_start", width="stretch")
+    c[2].button("다른 언어 학습", on_click=other_language, key="fin_other", width="stretch")
+
+
+# ------------------------------------------------------------------
+# 7. 영어 트랙 (단계 1~6): 개념 이해 + 연습
+# ------------------------------------------------------------------
+AUDIO_DIR = Path(__file__).parent / "audio"   # 원어민 녹음 파일을 넣는 폴더 (예: audio/가.mp3)
+
+
+def audio_uri(w):
+    for ext, mime in (("mp3", "audio/mpeg"), ("wav", "audio/wav"), ("m4a", "audio/mp4"), ("ogg", "audio/ogg")):
+        f = AUDIO_DIR / f"{w}.{ext}"
+        if f.exists():
+            return f"data:{mime};base64," + base64.b64encode(f.read_bytes()).decode()
+    return ""
+
+
+def listen(words, lang="en-US", hide=False):
+    """audio 폴더에 파일이 있으면 그 소리를, 없으면 브라우저 내장 음성을 들려줘요"""
+    btns = "".join(
+        f'<button data-t="{w}" data-a="{audio_uri(w)}" onclick="s(this)">🔊 {"소리 듣기" if hide else w}</button>'
+        for w in words)
+    script = ("function s(b){speechSynthesis.cancel();if(b.dataset.a){new Audio(b.dataset.a).play();return;}"
+              "var u=new SpeechSynthesisUtterance(b.dataset.t);u.lang='" + lang + "';u.rate=0.7;"
+              "var v=speechSynthesis.getVoices().filter(function(x){return x.lang.replace('_','-').indexOf('" + lang[:2] + "')==0;});"
+              "if(v.length)u.voice=v[0];speechSynthesis.speak(u);}")
+    components.html("<style>button{background:#7B1E2E;color:#fff;border:0;border-radius:10px;padding:8px 14px;"
+                    "margin:3px;font-size:15px;cursor:pointer}</style>" + btns + "<script>" + script + "</script>",
+                    height=52 if len(words) <= 3 else 100)
+
+
+def envelope(audio, n=40):
+    """녹음 소리의 크기 변화(40칸)를 구해요"""
+    try:
+        w = wave.open(io.BytesIO(audio.getvalue()))
+        ch, raw = w.getnchannels(), w.readframes(w.getnframes())
+        x = [abs(v) for v in struct.unpack("<%dh" % (len(raw) // 2), raw)][::ch]
+        size = max(1, len(x) // n)
+        e = [sum(x[k * size:(k + 1) * size]) / size for k in range(n)]
+        m = max(e) or 1
+        return [v / m for v in e], len(x) / w.getframerate()
+    except Exception:
+        return None, 0
+
+
+def bump(amp, length, n=40):
+    L, s = int(n * length), (n - int(n * length)) // 2
+    return [amp * math.sin(math.pi * (k - s) / L) if s <= k < s + L else 0 for k in range(n)]
+
+
+def corr(a, b):
+    ma, mb = sum(a) / len(a), sum(b) / len(b)
+    num = sum((x - ma) * (y - mb) for x, y in zip(a, b))
+    den = math.sqrt(sum((x - ma) ** 2 for x in a) * sum((y - mb) ** 2 for y in b)) or 1
+    return num / den
+
+
+def score_audio(audio, ref):
+    """★임시 채점: 소리 모양을 기준 모양과 비교해요. 나중에 음성 인식으로 교체해요."""
+    e, sec = envelope(audio)
+    if not e or sec < 0.3:
+        return 15, e
+    return int(max(0, corr(e, ref)) * 100), e
+
+
+def graph_svg(ref, usr):
+    """입 벌림 곡선과 그 대칭 곡선을 함께 그려요. 위아래 곡선 사이가 '입이 벌어진 모양'이에요."""
+    W = 560
+    p = ['<svg viewBox="0 0 700 280" width="100%" style="max-height:40vh">']
+    for k, (name, vals) in enumerate([("올바른 발음", ref), ("내 발음", usr)]):
+        y0 = 72 + k * 135
+        up = [(j * W / 39, y0 - v * 58) for j, v in enumerate(vals)]
+        dn = [(x, 2 * y0 - y) for x, y in up]
+        pts = lambda L: " ".join(f"{x:.0f},{y:.0f}" for x, y in L)
+        ry = ";".join(f"{max(2, v * 58):.1f}" for v in vals)
+        p.append(f'<clipPath id="c{k}"><rect x="0" y="0" width="0" height="280"><animate attributeName="width" '
+                 f'from="0" to="{W + 4}" dur="2.4s" fill="freeze"/></rect></clipPath>')
+        p.append(f'<text x="5" y="{y0 - 62}" font-size="14" fill="{BURGUNDY}">{name}</text>')
+        p.append(f'<line x1="0" y1="{y0}" x2="{W}" y2="{y0}" stroke="#e5d5d8" stroke-dasharray="4 4"/>')
+        p.append(f'<g clip-path="url(#c{k})"><polygon points="{pts(up + dn[::-1])}" fill="rgba(123,30,46,0.18)"/>'
+                 f'<polyline points="{pts(up)}" fill="none" stroke="{BURGUNDY}" stroke-width="3"/>'
+                 f'<polyline points="{pts(dn)}" fill="none" stroke="{BURGUNDY}" stroke-width="3"/></g>')
+        p.append(f'<ellipse cx="635" cy="{y0}" rx="28" ry="2" fill="#f1d3b3" stroke="{BURGUNDY}" stroke-width="2">'
+                 f'<animate attributeName="ry" values="{ry}" dur="2.4s" repeatCount="indefinite"/></ellipse>')
+        p.append(f'<text x="635" y="{y0 + 78}" text-anchor="middle" font-size="12" fill="#666">입 모양</text>')
+    p.append("</svg>")
+    return "".join(p)
+
+
+def tongue_svg(kind):
+    tip = "M30 118 Q90 112 150 72 Q95 125 30 118" if kind == "l" else "M30 118 Q85 105 120 98 Q90 128 30 118"
+    note = "혀끝이 윗잇몸에 닿아요" if kind == "l" else "혀끝이 닿지 않고 뒤로 말려요"
+    return (f'<div style="display:inline-block;width:48%;text-align:center"><svg viewBox="0 0 200 140" width="100%">'
+            '<path d="M20 40 Q100 5 180 40" fill="none" stroke="#999" stroke-width="3"/>'
+            '<path d="M20 125 Q100 138 180 125" fill="none" stroke="#999" stroke-width="3"/>'
+            f'<path d="{tip}" fill="#e88a8a" stroke="#7B1E2E" stroke-width="2"/></svg>'
+            f'<b>{kind}</b><br>{note}</div>')
+
+
+def stretch(word, v, sc):
+    m = 0.28 * (sc - 1)
+    return word.replace(v, f"<span style='display:inline-block;transform:scaleX({sc});margin:0 {m:.2f}em'>{v}</span>", 1)
+
+
+def big(html, size=3):
+    return f"<div class='center' style='font-size:{size}rem;font-weight:800;color:{BURGUNDY}'>{html}</div>"
+
+
+# ---- 개념 이해 화면 내용 (t=제목, lines=설명, words=들어볼 단어, vis=그림) ----
+RL_PAGES = [
+    dict(t="r과 l, 같은 소리로 들리나요?",
+         lines=["한국어 화자는 **right**와 **light**를 모두 '라이트'처럼 발음하기 쉬워요.",
+                "❌ 오류: 둘을 똑같이 '라이트'로 발음해요.", "✅ 올바른 발음: r과 l은 서로 다른 소리예요."],
+         words=["right", "light"],
+         vis=lambda: big("right ≠ light", 2.6) + "<p class='center'>① 먼저 두 소리를 들어 봐요.</p>"),
+    dict(t="혀 위치가 달라요",
+         lines=["**r**: 혀끝이 입천장에 닿지 않고 뒤로 말려요.", "**l**: 혀끝이 윗잇몸에 닿아요.",
+                "※ 그림은 임시예요. 발음 기관 옆모습 사진으로 바꿀 수 있어요."],
+         words=["right", "light"], vis=lambda: tongue_svg("r") + tongue_svg("l")),
+]
+EI_PAGES = [
+    dict(t="eat과 it의 길이가 달라요",
+         lines=["**eat** /iː/: 길고 혀가 높아요. 입은 작게 벌려요.", "**it** /ɪ/: 짧고 혀가 조금 낮아요.",
+                "긴 소리는 글자를 늘여서 보여 줘요."],
+         words=["eat", "it"],
+         vis=lambda: big(stretch("e", "e", 1.8) + stretch("a", "a", 1.8) + "t &nbsp; it", 3)),
+    dict(t="잠깐! 단어 첫 e는 소리가 달라요",
+         lines=["**egg, end** → /ɛ/", "**even, equal** → /iː/", "**English** → /ɪ/"],
+         words=["egg", "end", "even", "equal", "English"],
+         vis=lambda: big("e ?", 4) + "<p class='center'>같은 e라도 단어마다 달라져요.</p>"),
+]
+SYL_PAGES = [
+    dict(t="단어를 어디서 끊어 읽을까요?",
+         lines=["철자 개수가 아니라 **모음 소리**를 들어야 해요.", "❌ speak → spe-ak (모음 글자 2개를 2음절로 셈)",
+                "✅ speak → 1음절 (ea가 /iː/ 한 소리)", "❌ cake → ca-ke (끝의 e는 소리가 나지 않아요)"],
+         words=["speak", "black", "cake"],
+         vis=lambda: big("speak<br>1음절", 3) + "<p class='center'>모음 소리 하나 = 음절 하나</p>"),
+    dict(t="음절이 나뉘는 규칙",
+         lines=["**합성어** sea | shell", "**접두사** re | play", "**접미사** teach | er",
+                "**모음 사이 자음 1개** pi | lot", "**모음 사이 자음 2개** dol | lar",
+                "bl, br, st 같은 첫소리 묶음과 sh, ch, th는 나누지 않아요."],
+         words=["seashell", "replay", "teacher", "pilot", "dollar"],
+         vis=lambda: big("sea | shell<br>re | play", 2.4)),
 ]
 
 
-def viz_syllables():
-    for word, parts, korean, count in SYLLABLE_WORDS:
-        k_html = "".join(f'<span class="syl-k">{k}</span>' for k in korean)
-        e_html = "".join(
-            f'<span class="syl-v">{t}</span>' if big else f'<span class="syl-c">{t}</span>'
-            for t, big in parts
-        )
-        html(f"""
-        <div class="syl-card">
-        <b style="color:#ffd0d0">{word}</b>
-        <div class="syl-row"><span class="syl-tag">한국어식 ({len(korean)}박)</span>{k_html}</div>
-        <div class="syl-row"><span class="syl-tag">영어 ({count}음절)</span>{e_html}</div>
-        </div>
-        """)
-    st.caption("영어는 모음이 박자를 만들어요. 자음은 작고 빠르게, 모음에 붙여서!")
+for _pages, _tabs, _tips in (
+    (RL_PAGES, ["소리 듣기", "혀 위치"], ["r과 l은 소리가 달라요. 두 소리를 번갈아 들어 봐요.", "혀끝이 닿는지, 말리는지를 비교해요."]),
+    (EI_PAGES, ["길이 비교", "첫 e 소리"], ["긴 소리 /iː/는 입을 작게, 짧은 소리 /ɪ/는 조금 더 열어요.", "같은 e라도 단어에 따라 /ɛ/, /iː/, /ɪ/로 달라요."]),
+    (SYL_PAGES, ["오류 발견", "규칙 배우기"], ["모음 글자 수와 음절 수는 같지 않을 수 있어요.", "먼저 모음 소리를 찾고, 그다음 경계를 정해요."]),
+):
+    for _p, _t, _tip in zip(_pages, _tabs, _tips):
+        _p["tab"], _p["tip"] = _t, _tip
 
 
-# ----- 5-5. 일본어 트랙: 휴지 흔들림 -----
-def viz_tissue():
-    html("""
-    <svg viewBox="0 0 480 210" style="width:100%;height:auto">
-    <rect width="480" height="210" rx="14" fill="#1c070c"/>
-    <g>
-      <rect x="55" y="25" width="50" height="6" rx="3" fill="#f5b5b5"/>
-      <g class="tissue sway-mid"><rect x="78" y="31" width="5" height="85" rx="2" fill="#ffe3c2"/></g>
-      <circle cx="30" cy="115" r="3" fill="#ff8a8a"><animate attributeName="cx" from="20" to="70" dur="1.2s" repeatCount="indefinite"/></circle>
-      <circle cx="30" cy="125" r="3" fill="#ff8a8a"><animate attributeName="cx" from="10" to="60" dur="1.4s" repeatCount="indefinite"/></circle>
-      <text x="80" y="155" text-anchor="middle" font-size="26" font-weight="800" fill="#ff6b6b">가</text>
-      <text x="80" y="178" text-anchor="middle" font-size="13" fill="#ffd0d0">평음 (예사소리)</text>
-      <text x="80" y="196" text-anchor="middle" font-size="12" fill="#f5b5b5">숨 보통</text>
-    </g>
-    <g>
-      <rect x="215" y="25" width="50" height="6" rx="3" fill="#f5b5b5"/>
-      <g class="tissue sway-strong"><rect x="238" y="31" width="5" height="85" rx="2" fill="#ffe3c2"/></g>
-      <circle cx="190" cy="105" r="3" fill="#ff8a8a"><animate attributeName="cx" from="180" to="235" dur="0.7s" repeatCount="indefinite"/></circle>
-      <circle cx="190" cy="115" r="3" fill="#ff8a8a"><animate attributeName="cx" from="175" to="230" dur="0.8s" repeatCount="indefinite"/></circle>
-      <circle cx="190" cy="125" r="3" fill="#ff8a8a"><animate attributeName="cx" from="170" to="225" dur="0.6s" repeatCount="indefinite"/></circle>
-      <circle cx="190" cy="135" r="3" fill="#ff8a8a"><animate attributeName="cx" from="185" to="240" dur="0.9s" repeatCount="indefinite"/></circle>
-      <text x="240" y="155" text-anchor="middle" font-size="26" font-weight="800" fill="#ff6b6b">카</text>
-      <text x="240" y="178" text-anchor="middle" font-size="13" fill="#ffd0d0">격음 (거센소리)</text>
-      <text x="240" y="196" text-anchor="middle" font-size="12" fill="#f5b5b5">숨 강하게 터뜨림</text>
-    </g>
-    <g>
-      <rect x="375" y="25" width="50" height="6" rx="3" fill="#f5b5b5"/>
-      <g class="tissue sway-weak"><rect x="398" y="31" width="5" height="85" rx="2" fill="#ffe3c2"/></g>
-      <text x="400" y="155" text-anchor="middle" font-size="26" font-weight="800" fill="#ff6b6b">까</text>
-      <text x="400" y="178" text-anchor="middle" font-size="13" fill="#ffd0d0">경음 (된소리)</text>
-      <text x="400" y="196" text-anchor="middle" font-size="12" fill="#f5b5b5">목에 힘, 숨 거의 없음</text>
-    </g>
-    </svg>
-    """)
-    st.caption("입 앞에 휴지(또는 손바닥)를 대고 가 → 카 → 까 를 말해 보세요. 흔들림이 달라야 해요!")
-    html("""
-    <div>
-    <div class="barrow"><span class="barlabel">까 (경음)</span><div class="bar" style="width:40px"></div></div>
-    <div class="barrow"><span class="barlabel">가 (평음)</span><div class="bar" style="width:120px"></div></div>
-    <div class="barrow"><span class="barlabel">카 (격음)</span><div class="bar" style="width:260px"></div></div>
-    <div class="note" style="text-align:left">▲ 자음 뒤에 숨이 새어 나오는 시간(대략적인 비교)</div>
-    </div>
-    """)
+def slide_css():
+    st.markdown("""<style>
+    .hd{display:flex;justify-content:space-between;align-items:center;background:#7B1E2E;
+        border-radius:14px;padding:8px 16px;margin:4px 0 8px}
+    .hd b{color:#fff !important}
+    .pill{display:inline-block;padding:3px 12px;border-radius:999px;font-size:.85rem;
+          margin-left:6px;background:#a0495a;color:#fff !important}
+    .pill.on{background:#fff;color:#7B1E2E !important;font-weight:800}
+    .tip{background:#fdf0f2;border-left:6px solid #7B1E2E;border-radius:10px;
+         padding:8px 14px;margin:8px 0;color:#5a1522 !important}
+    [data-testid="stVerticalBlockBorderWrapper"]{border:2px solid #ecd0d5 !important;
+         border-radius:18px !important;background:#fffafb}
+    </style>""", unsafe_allow_html=True)
 
 
-# ----- 5-6. 일본어 트랙: 모음 지도 + 입술 모양 -----
-def viz_vowel_map():
-    html("""
-    <svg viewBox="0 0 400 290" style="width:100%;height:auto">
-    <rect width="400" height="290" rx="14" fill="#1c070c"/>
-    <text x="16" y="22" font-size="12" fill="#f5b5b5">↑ 혀가 높음</text>
-    <text x="16" y="276" font-size="12" fill="#f5b5b5">↓ 혀가 낮음</text>
-    <text x="90" y="276" font-size="12" fill="#f5b5b5">← 혀가 앞</text>
-    <text x="300" y="276" font-size="12" fill="#f5b5b5">혀가 뒤 →</text>
-    <circle cx="70" cy="55" r="17" fill="none" stroke="#f5b5b5" stroke-width="2"/>
-    <text x="70" y="61" text-anchor="middle" font-size="16" fill="#f5b5b5">い</text>
-    <circle cx="105" cy="130" r="17" fill="none" stroke="#f5b5b5" stroke-width="2"/>
-    <text x="105" y="136" text-anchor="middle" font-size="16" fill="#f5b5b5">え</text>
-    <circle cx="170" cy="220" r="17" fill="none" stroke="#f5b5b5" stroke-width="2"/>
-    <text x="170" y="226" text-anchor="middle" font-size="16" fill="#f5b5b5">あ</text>
-    <circle cx="270" cy="70" r="17" fill="none" stroke="#f5b5b5" stroke-width="2"/>
-    <text x="270" y="76" text-anchor="middle" font-size="16" fill="#f5b5b5">う</text>
-    <circle cx="280" cy="140" r="17" fill="none" stroke="#f5b5b5" stroke-width="2"/>
-    <text x="280" y="146" text-anchor="middle" font-size="16" fill="#f5b5b5">お</text>
-    <circle cx="70" cy="95" r="15" fill="#e11d48" opacity="0.0"/>
-    <circle cx="48" cy="40" r="13" fill="#e11d48"/>
-    <text x="48" y="46" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">ㅣ</text>
-    <circle cx="85" cy="150" r="13" fill="#e11d48"/>
-    <text x="85" y="156" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">ㅔ</text>
-    <circle cx="150" cy="240" r="13" fill="#e11d48"/>
-    <text x="150" y="246" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">ㅏ</text>
-    <circle cx="350" cy="45" r="15" fill="#e11d48" stroke="#ffd166" stroke-width="3"/>
-    <text x="350" y="51" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">ㅜ</text>
-    <circle cx="335" cy="120" r="15" fill="#e11d48" stroke="#ffd166" stroke-width="3"/>
-    <text x="335" y="126" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">ㅗ</text>
-    <circle cx="300" cy="195" r="13" fill="#b91c1c"/>
-    <text x="300" y="201" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">ㅓ</text>
-    <circle cx="238" cy="42" r="13" fill="#b91c1c"/>
-    <text x="238" y="48" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">ㅡ</text>
-    </svg>
-    """)
-    st.caption("● 빨간 원 = 한국어 모음 / ○ 테두리 = 일본어 모음 / 노란 테두리 = 입술을 둥글게(원순). 우(う)는 한국어 ㅡ 쪽에 더 가까워요!")
+def header(sub, tabs, on):
+    pills = "".join(f"<span class='pill{' on' if k == on else ''}'>{t}</span>" for k, t in enumerate(tabs))
+    st.markdown(f"<div class='hd'><b>길라잡이 · {sub}</b><div>{pills}</div></div>", unsafe_allow_html=True)
 
 
-def viz_lips():
-    html("""
-    <svg viewBox="0 0 500 120" style="width:100%;height:auto">
-    <rect width="500" height="120" rx="14" fill="#1c070c"/>
-    <ellipse cx="50" cy="55" rx="14" ry="14" fill="#7f1d1d" stroke="#ff6b6b" stroke-width="3"/>
-    <text x="50" y="105" text-anchor="middle" font-size="14" fill="#ffd0d0">ㅜ 작고 둥글게</text>
-    <ellipse cx="150" cy="55" rx="26" ry="6" fill="#7f1d1d" stroke="#f5b5b5" stroke-width="3"/>
-    <text x="150" y="105" text-anchor="middle" font-size="14" fill="#ffd0d0">う 납작·둥글지 않음</text>
-    <ellipse cx="250" cy="55" rx="19" ry="17" fill="#7f1d1d" stroke="#ff6b6b" stroke-width="3"/>
-    <text x="250" y="105" text-anchor="middle" font-size="14" fill="#ffd0d0">ㅗ 둥글고 큼</text>
-    <ellipse cx="350" cy="55" rx="26" ry="18" fill="#7f1d1d" stroke="#ff6b6b" stroke-width="3"/>
-    <text x="350" y="105" text-anchor="middle" font-size="14" fill="#ffd0d0">ㅓ 둥글지 않고 크게</text>
-    <ellipse cx="450" cy="55" rx="30" ry="5" fill="#7f1d1d" stroke="#ff6b6b" stroke-width="3"/>
-    <text x="450" y="105" text-anchor="middle" font-size="14" fill="#ffd0d0">ㅡ 옆으로 납작</text>
-    </svg>
-    """)
+def pg_move(d):
+    ss.page += d
 
 
-# ----- 5-7. 일본어 트랙: 받침 (박자 + 노래방 + 혀 단면도) -----
-def viz_final_consonants():
-    cols = st.columns(3)
-    items = [
-        ("flat", "ㅁ 받침 (밤)", "입술을 닫아요", None, True),
-        ("lateral", "ㄴ 받침 (반)", "혀끝이 윗잇몸에 붙어요", (76, 62), False),
-        ("velar", "ㅇ 받침 (방)", "혀뿌리가 올라가요", (220, 46), False),
-    ]
-    for col, (key, cap, note, touch, lips) in zip(cols, items):
-        with col:
-            html(tongue_svg(key, cap, note, touch, lips))
-
-    st.markdown("**한 박자 비교**")
-    html("""
-    <div>
-    <div style="margin:6px 0"><span class="note">일본어 ばん (2박)</span><br>
-    <span class="beat">ば</span><span class="beat">ん</span></div>
-    <div style="margin:6px 0"><span class="note">한국어 반 (1박, 받침은 짧게 닫기만)</span><br>
-    <span class="beat k">반</span></div>
-    </div>
-    """)
-    st.markdown("**노래방 가사처럼 따라 읽기** (한 글자 = 한 박자, 1초씩)")
-    html("""
-    <div>
-    <div class="karaoke">밤<span style="animation-delay:0s">밤</span></div>
-    <div class="karaoke">반<span style="animation-delay:1s">반</span></div>
-    <div class="karaoke">방<span style="animation-delay:2s">방</span></div>
-    </div>
-    """)
-    st.caption("글자 색이 차오르는 속도에 맞춰 읽어 보세요. 받침 때문에 길어지면 안 돼요!")
-
-
-VISUALS = {
-    "rl": viz_rl,
-    "ecg": lambda: (viz_ecg(), viz_e_table()),
-    "syllable": viz_syllables,
-    "tissue": viz_tissue,
-    "vowel": lambda: (viz_vowel_map(), viz_lips()),
-    "final": viz_final_consonants,
-}
-
-
-# ------------------------------------------------------------
-# 6. 학습 내용 데이터
-#    items : 연습 단어 (target=정답, conf=헷갈리는 단어, hint=힌트)
-#    quiz  : 퀴즈 (q, options, answer, why, speak=듣고 고르기용)
-# ------------------------------------------------------------
-TRACKS = {
-    "영어": {
-        "label": "영어 (한국어 모국어 화자용)",
-        "lang": "en-US",
-        "lessons": [
-            {
-                "short": "r / l",
-                "title": "자음 r / l",
-                "visual": "rl",
-                "concept": """
-### 🎯 핵심 문제
-한국어의 ㄹ은 하나의 소리 같지만, 실제로는 **두 가지로 소리 나요.**
-
-- **초성·모음 사이 ㄹ** (오리, 나라): 혀끝이 윗잇몸을 **톡 한 번 치고** 내려오는 **탄설음**
-- **종성(받침) ㄹ** (달, 물): 혀끝을 윗잇몸에 **붙인 채** 공기가 혀 양옆으로 흐르는 **설측음**
-
-영어 **l은 한국어 받침 ㄹ과 같은 자세**예요. 이미 가진 소리를 단어 맨 앞에서도 만들면 돼요!
-영어 **r은 한국어에 없는 소리**예요. 혀끝이 **어디에도 닿지 않고** 뒤로 말리며 입술이 살짝 둥글어져요.
-
-### 🛠️ 연습 요령
-- **l** : "달"의 받침 ㄹ 자세를 먼저 만들고 시작 → "을~라이트" (light)
-- **r** : 입술을 "우" 모양으로 모으고 혀를 뒤로 → "우~라이트" (right)
-- **혀끝이 닿으면 l, 닿지 않으면 r**
-""",
-                "items": [
-                    {"target": "light", "conf": "right", "hint": "혀끝을 윗잇몸에 붙이고 '을~' 하며 시작"},
-                    {"target": "right", "conf": "light", "hint": "입술을 둥글게, 혀끝은 아무 데도 닿지 않게"},
-                    {"target": "lock", "conf": "rock", "hint": "l: 혀끝을 붙였다가 떼면서"},
-                    {"target": "rock", "conf": "lock", "hint": "r: 혀를 뒤로 당기기"},
-                ],
-                "quiz": [
-                    {"q": "한국어 '오리'의 ㄹ처럼 혀끝으로 톡 치는 소리를 무엇이라 할까요?",
-                     "options": ["탄설음", "설측음", "비음", "마찰음"], "answer": "탄설음",
-                     "why": "혀끝이 윗잇몸을 한 번 톡 치는 소리예요."},
-                    {"q": "영어 /l/을 낼 때 혀끝의 위치는?",
-                     "options": ["윗잇몸에 붙인 채 공기는 옆으로", "어디에도 닿지 않고 뒤로 말기",
-                                 "윗니와 아랫니 사이에 끼우기", "아랫니 뒤에 붙이기"],
-                     "answer": "윗잇몸에 붙인 채 공기는 옆으로",
-                     "why": "한국어 받침 ㄹ(달)과 같은 자세예요."},
-                    {"q": "소리를 듣고 알맞은 단어를 고르세요. (🔊 버튼을 누르세요)",
-                     "options": ["right", "light"], "answer": "light", "speak": "light",
-                     "why": "light는 혀끝이 윗잇몸에 붙어요."},
-                    {"q": "영어 /r/의 특징으로 알맞은 것은?",
-                     "options": ["혀끝이 어디에도 닿지 않는다", "혀끝으로 윗잇몸을 톡 친다",
-                                 "혀끝을 윗니에 붙인다", "혀뿌리로 입천장을 막는다"],
-                     "answer": "혀끝이 어디에도 닿지 않는다",
-                     "why": "r은 혀끝이 떠 있는 소리예요."},
-                ],
-            },
-            {
-                "short": "i / e",
-                "title": "모음 i / e",
-                "visual": "ecg",
-                "concept": """
-### 🎯 핵심 문제
-한국어는 ㅣ 하나로 두 소리를 모두 처리하기 쉬워요. 영어에는 **길이와 긴장도**가 다른 두 소리가 있어요.
-
-- **eat /iː/** : 혀가 **가장 높고 앞**, 입꼬리를 옆으로, **길고 긴장**된 소리
-- **it /ɪ/** : 혀가 **조금 낮고 이완**, 입이 조금 더 열림, **짧은** 소리 (한국어 ㅣ와 ㅔ의 중간 느낌)
-
-### 🛠️ 연습 요령
-1. 그래프에서 **빨간 선(혀)** 이 eat에서 더 높은지 확인
-2. eat는 **길게 늘이고**, it는 **짧게 툭**
-3. 철자 e는 단어마다 소리가 달라요 (표 참고)
-""",
-                "items": [
-                    {"target": "seat", "conf": "sit", "hint": "길게 늘인 ㅣ, 입꼬리 옆으로"},
-                    {"target": "sit", "conf": "seat", "hint": "짧고 힘을 뺀 소리"},
-                    {"target": "sheep", "conf": "ship", "hint": "쉬~입 (길게)"},
-                    {"target": "ship", "conf": "sheep", "hint": "쉽 (짧게)"},
-                ],
-                "quiz": [
-                    {"q": "eat의 모음 /iː/는 it의 모음 /ɪ/보다 어떤가요?",
-                     "options": ["길고 혀가 더 높다", "짧고 혀가 더 높다", "길고 혀가 더 낮다", "차이가 없다"],
-                     "answer": "길고 혀가 더 높다", "why": "그래프에서 eat가 더 길고 더 높았죠!"},
-                    {"q": "it의 모음 /ɪ/의 특징은?",
-                     "options": ["짧고 이완된 소리", "길고 긴장된 소리", "입술을 둥글게 하는 소리", "소리가 나지 않는다"],
-                     "answer": "짧고 이완된 소리", "why": "힘을 빼고 짧게 내요."},
-                    {"q": "소리를 듣고 알맞은 단어를 고르세요. (🔊 버튼을 누르세요)",
-                     "options": ["sheep", "ship"], "answer": "ship", "speak": "ship",
-                     "why": "ship은 짧은 /ɪ/ 소리예요."},
-                    {"q": "make의 마지막 e는 어떻게 소리 날까요?",
-                     "options": ["소리 나지 않고 앞 모음을 길게 만든다", "강한 /iː/로 소리 난다",
-                                 "/ɛ/로 소리 난다", "약한 '어'로 소리 난다"],
-                     "answer": "소리 나지 않고 앞 모음을 길게 만든다", "why": "magic e라고도 불러요."},
-                ],
-            },
-            {
-                "short": "음절",
-                "title": "음절 (모음 개수 = 음절 수)",
-                "visual": "syllable",
-                "concept": """
-### 🎯 핵심 문제
-한국어는 자음마다 모음(ㅡ)을 붙여서 발음하기 쉬워요. 그래서 **speak → "스피크"(3음절)** 가 돼요.
-영어는 **발음되는 모음의 개수 = 음절 수**예요. speak는 모음이 ea 하나라서 **1음절**이고, 자음은 작고 빠르게 붙어요. (ㅅ피ㅋ)
-
-### 🛠️ 연습 요령
-1. **모음을 고정**하고 그 모음만 크게 발음 (그림의 빨간 큰 글자)
-2. 자음 s, p, k는 **어디에 붙는지** 확인 (모음 앞? 뒤?)
-3. 자음 뒤에 **"ㅡ"를 붙이지 않기**: 입 모양만 만들고 소리는 거의 내지 않기
-""",
-                "items": [
-                    {"target": "speak", "conf": None, "hint": "sp + EE + k, 1음절!"},
-                    {"target": "street", "conf": None, "hint": "str + EE + t, 1음절!"},
-                    {"target": "strike", "conf": None, "hint": "str + I + k, 1음절! 끝의 e는 소리 없음"},
-                    {"target": "desk", "conf": None, "hint": "d + E + sk, 1음절!"},
-                ],
-                "quiz": [
-                    {"q": "street는 몇 음절일까요?",
-                     "options": ["1", "2", "3", "4"], "answer": "1", "why": "모음 소리가 ee 하나뿐이에요."},
-                    {"q": "desk의 올바른 발음 방식은?",
-                     "options": ["모음 하나에 자음을 짧게 붙여 한 박자", "데-스-크 세 박자",
-                                 "모든 글자에 ㅡ를 붙인다", "e를 발음하지 않는다"],
-                     "answer": "모음 하나에 자음을 짧게 붙여 한 박자", "why": "영어는 모음이 박자를 만들어요."},
-                    {"q": "영어에서 음절 수를 결정하는 것은?",
-                     "options": ["발음되는 모음의 개수", "자음의 개수", "글자 수", "단어의 길이"],
-                     "answer": "발음되는 모음의 개수", "why": "모음 개수 = 음절 수!"},
-                    {"q": "ice cream은 영어에서 몇 음절일까요? (한국어 '아이스크림'은 5음절)",
-                     "options": ["2", "3", "4", "5"], "answer": "2", "why": "ice(1) + cream(1)이에요."},
-                ],
-            },
-        ],
-        "final": {
-            "mcq": [
-                {"q": "소리를 듣고 알맞은 단어를 고르세요. (🔊 버튼을 누르세요)",
-                 "options": ["right", "light"], "answer": "light", "speak": "light",
-                 "why": "light는 혀끝이 윗잇몸에 붙어요."},
-                {"q": "eat와 it의 차이로 맞는 것은?",
-                 "options": ["eat는 길고 긴장, it는 짧고 이완", "eat는 짧고 이완, it는 길고 긴장",
-                             "둘은 길이만 같고 혀 높이가 다르다", "둘은 완전히 같다"],
-                 "answer": "eat는 길고 긴장, it는 짧고 이완", "why": "ECG 그래프를 떠올려 보세요."},
-                {"q": "strike는 몇 음절일까요?",
-                 "options": ["1", "2", "3", "5"], "answer": "1", "why": "모음 i 하나뿐이에요."},
-            ],
-            "speak": [
-                {"target": "grass", "conf": "glass", "hint": "r: 혀끝을 띄우기"},
-                {"target": "leave", "conf": "live", "hint": "l + 길고 높은 ㅣ"},
-                {"target": "strike", "conf": None, "hint": "한 음절! 자음 뒤에 ㅡ 금지"},
-            ],
-        },
-    },
-    "일본어": {
-        "label": "일본어 (일본어 모국어 화자용 · 한국어 발음)",
-        "lang": "ko-KR",
-        "lessons": [
-            {
-                "short": "평·격·경음",
-                "title": "자음 평음 / 격음 / 경음 (平音・激音・濃音)",
-                "visual": "tissue",
-                "concept": """
-### 🎯 핵심 문제
-일본어는 か/が처럼 **성대가 떨리는지(유성·무성)** 로 자음을 구별해요.
-한국어 가/카/까는 **성대 진동이 아니라 숨의 세기와 목의 긴장도**로 구별해요.
-
-- **평음(예사소리)** ㄱ ㄷ ㅂ ㅈ : 숨과 힘이 **보통** → 가
-- **격음(거센소리)** ㅋ ㅌ ㅍ ㅊ : 숨을 **강하게 터뜨림** → 카 (휴지가 크게 흔들려요)
-- **경음(된소리)** ㄲ ㄸ ㅃ ㅉ : **목에 힘**을 주고 숨은 **거의 내지 않음** → 까 (휴지가 거의 안 흔들려요)
-
-### 🛠️ 연습 요령
-1. 휴지를 입 앞에 대고 **카 → 가 → 까** 순서로 흔들림 확인
-2. 격음은 "하~" 하는 숨을 섞는 느낌, 경음은 소리를 **꾹 눌렀다 터뜨리는** 느낌
-3. 짝으로 연습: 불 / 풀 / 뿔, 달 / 탈 / 딸
-""",
-                "items": [
-                    {"target": "불", "conf": "풀", "hint": "평음: 숨 보통, 힘 보통"},
-                    {"target": "풀", "conf": "뿔", "hint": "격음: 숨을 강하게 터뜨리기"},
-                    {"target": "뿔", "conf": "불", "hint": "경음: 목에 힘, 숨은 거의 없이"},
-                    {"target": "딸", "conf": "달", "hint": "경음: 꾹 눌렀다가 터뜨리기"},
-                ],
-                "quiz": [
-                    {"q": "입 앞의 휴지가 가장 크게 흔들리는 소리는?",
-                     "options": ["격음 (카)", "평음 (가)", "경음 (까)", "모두 같다"], "answer": "격음 (카)",
-                     "why": "격음은 숨을 강하게 터뜨려요."},
-                    {"q": "경음(ㄲ ㄸ ㅃ)을 낼 때의 느낌은?",
-                     "options": ["목에 힘을 주고 숨은 거의 내지 않는다", "숨을 강하게 내뿜는다",
-                                 "성대를 크게 떨게 한다", "입술을 둥글게 한다"],
-                     "answer": "목에 힘을 주고 숨은 거의 내지 않는다", "why": "휴지가 거의 안 흔들려요."},
-                    {"q": "소리를 듣고 알맞은 단어를 고르세요. (🔊 버튼을 누르세요)",
-                     "options": ["불", "풀", "뿔"], "answer": "풀", "speak": "풀",
-                     "why": "풀은 격음이라 숨이 강해요."},
-                    {"q": "한국어 가/카/까를 구별하는 기준은?",
-                     "options": ["숨의 세기와 목의 긴장도", "성대 진동의 유무", "입술 모양", "소리의 높낮이"],
-                     "answer": "숨의 세기와 목의 긴장도", "why": "일본어의 유성·무성 구별과 달라요."},
-                ],
-            },
-            {
-                "short": "모음",
-                "title": "모음 (원순 모음 ㅜ ㅗ / ㅓ ㅡ)",
-                "visual": "vowel",
-                "concept": """
-### 🎯 핵심 문제
-먼저 일본어와 **비슷해서 쉬운 모음**부터 시작해요: **ㅣ ㅔ ㅏ ㅜ ㅗ**.
-하지만 비슷해 보여도 다른 점이 있어요.
-
-- **ㅜ / ㅗ** : 입술을 **둥글게 앞으로 내밀어요(원순)**. 일본어 う(u)는 입술을 거의 둥글게 하지 않아요.
-- **ㅡ** : 입술을 둥글게 하지 않고 **옆으로 납작하게**. 오히려 일본어 う에 가까워요.
-- **ㅓ** : 일본어에 없는 소리. 입을 **크게 벌리고 둥글게 하지 않아요**.
-
-### 🛠️ 연습 요령
-1. 모음 지도에서 **빨간 원(한국어)과 테두리(일본어)의 위치 차이** 확인
-2. 거울을 보며 **입술 모양** 비교: 우(ㅜ)는 **작은 동그라미**
-3. ㅗ → ㅓ 로 바꿀 때 **입술 둥글기를 풀면서** 턱을 내리기
-""",
-                "items": [
-                    {"target": "어머니", "conf": "오머니", "hint": "어: 입술 둥글지 않게, 크게"},
-                    {"target": "오리", "conf": "어리", "hint": "오: 입술을 둥글게"},
-                    {"target": "그림", "conf": "구림", "hint": "으: 입술 납작하게"},
-                    {"target": "구름", "conf": "그름", "hint": "우: 입술을 작게 모아 앞으로"},
-                ],
-                "quiz": [
-                    {"q": "한국어 ㅜ를 낼 때 입술 모양은?",
-                     "options": ["둥글게 앞으로 내민다", "옆으로 납작하게 한다", "크게 벌린다", "움직이지 않는다"],
-                     "answer": "둥글게 앞으로 내민다", "why": "일본어 う는 입술을 거의 내밀지 않아요."},
-                    {"q": "한국어 ㅡ는 입술이 어떤가요?",
-                     "options": ["둥글지 않고 옆으로 납작", "작고 둥글게", "크게 둥글게", "앞으로 내밈"],
-                     "answer": "둥글지 않고 옆으로 납작", "why": "일본어 う와 가까워요."},
-                    {"q": "소리를 듣고 알맞은 단어를 고르세요. (🔊 버튼을 누르세요)",
-                     "options": ["구름", "거름", "고름"], "answer": "구름", "speak": "구름",
-                     "why": "구름의 첫 모음은 둥근 ㅜ예요."},
-                    {"q": "일본어 화자가 먼저 익히기 쉬운 공통 모음은?",
-                     "options": ["ㅣ ㅔ ㅏ ㅜ ㅗ", "ㅓ ㅡ ㅐ ㅟ ㅢ", "ㅑ ㅕ ㅛ ㅠ ㅖ", "ㅘ ㅝ ㅙ ㅞ ㅚ"],
-                     "answer": "ㅣ ㅔ ㅏ ㅜ ㅗ", "why": "쉬운 것부터, 그다음에 ㅓ·ㅡ!"},
-                ],
-            },
-            {
-                "short": "받침 ㄴㅁㅇ",
-                "title": "음절 (받침 비음 ㄴ ㅁ ㅇ)",
-                "visual": "final",
-                "concept": """
-### 🎯 핵심 문제
-일본어 ん(ん)은 **독립된 한 박자**라서, 한국어 받침을 **길게 늘이기 쉬워요.** (반 → "바안")
-한국어 받침은 **한 글자 안에서 짧게 닫는 것**이에요. **한 글자 = 한 박자!**
-
-받침 비음 3가지는 **닫는 위치**가 달라요.
-- **ㅁ** (밤) : **입술**을 닫아요
-- **ㄴ** (반) : **혀끝**이 윗잇몸에 붙어요
-- **ㅇ** (방) : **혀뿌리**가 올라가 입천장 뒤쪽에 닿아요
-
-### 🛠️ 연습 요령
-1. **받침만 먼저** 연습: 음(ㅁ) → 은(ㄴ) → 응(ㅇ), 닫는 위치 느끼기
-2. 받침이 있는 글자로 확장: 밤 / 반 / 방
-3. **노래방 가사**처럼 한 박자에 맞춰 읽기 (길게 늘이지 않기)
-""",
-                "items": [
-                    {"target": "밤", "conf": "반", "hint": "끝에서 입술을 닫고 멈추기"},
-                    {"target": "반", "conf": "방", "hint": "끝에서 혀끝을 윗잇몸에"},
-                    {"target": "방", "conf": "밤", "hint": "끝에서 혀뿌리를 올리기"},
-                    {"target": "한국", "conf": None, "hint": "한(ㄴ)과 국(ㄱ)을 각각 한 박자로"},
-                ],
-                "quiz": [
-                    {"q": "한국어 반(班)은 몇 박자로 읽을까요?",
-                     "options": ["1박자", "2박자", "3박자", "받침만 따로 1박자"], "answer": "1박자",
-                     "why": "받침은 한 글자 안에서 짧게 닫아요."},
-                    {"q": "ㅁ 받침(밤)에서 닫는 곳은?",
-                     "options": ["입술", "혀끝과 윗잇몸", "혀뿌리와 입천장", "목구멍"], "answer": "입술",
-                     "why": "ㅁ은 입술을 닫는 소리예요."},
-                    {"q": "소리를 듣고 알맞은 단어를 고르세요. (🔊 버튼을 누르세요)",
-                     "options": ["밤", "반", "방"], "answer": "방", "speak": "방",
-                     "why": "방은 혀뿌리가 올라가는 ㅇ 받침이에요."},
-                    {"q": "ㅇ 받침을 낼 때 닫는 곳은?",
-                     "options": ["혀뿌리와 입천장 뒤쪽", "입술", "혀끝과 윗잇몸", "윗니와 아랫입술"],
-                     "answer": "혀뿌리와 입천장 뒤쪽", "why": "ㅇ은 입 안쪽 깊은 곳에서 막아요."},
-                ],
-            },
-        ],
-        "final": {
-            "mcq": [
-                {"q": "소리를 듣고 알맞은 단어를 고르세요. (🔊 버튼을 누르세요)",
-                 "options": ["불", "풀", "뿔"], "answer": "풀", "speak": "풀",
-                 "why": "풀은 숨이 강한 격음이에요."},
-                {"q": "한국어 ㅡ와 ㅜ의 차이로 맞는 것은?",
-                 "options": ["ㅜ는 입술을 둥글게, ㅡ는 납작하게", "ㅜ는 납작하게, ㅡ는 둥글게",
-                             "둘 다 입술을 둥글게", "둘 다 같은 소리"],
-                 "answer": "ㅜ는 입술을 둥글게, ㅡ는 납작하게", "why": "모음 지도와 입술 그림을 떠올려 보세요."},
-                {"q": "받침이 있는 글자(예: 반)는 몇 박자일까요?",
-                 "options": ["1박자", "2박자", "3박자", "4박자"], "answer": "1박자",
-                 "why": "한 글자 = 한 박자예요."},
-            ],
-            "speak": [
-                {"target": "딸", "conf": "탈", "hint": "경음: 꾹 눌렀다 터뜨리기"},
-                {"target": "그림", "conf": "구림", "hint": "으: 입술 납작하게"},
-                {"target": "방", "conf": "밤", "hint": "받침 ㅇ: 혀뿌리 올리기"},
-            ],
-        },
-    },
-}
-
-PASS_PRACTICE = 60   # 연습 평균 합격 점수
-PASS_QUIZ = 75       # 퀴즈 합격 점수(%)
-PASS_FINAL = 70      # 최종 테스트 합격 점수
-SELF_LEVELS = {"어려웠어요": 30, "괜찮아요": 60, "좋아요": 80, "아주 좋아요": 100}
-
-
-# ------------------------------------------------------------
-# 7. session_state 초기화 (앱이 기억해야 하는 값들)
-# ------------------------------------------------------------
-def init_state():
-    if "progress" not in st.session_state:
-        st.session_state.progress = {name: [False] * 7 for name in TRACKS}
-    if "stage_scores" not in st.session_state:
-        st.session_state.stage_scores = {name: [None] * 7 for name in TRACKS}
-    for key in ["best", "attempts", "seen", "quiz_result", "quiz_attempt"]:
-        if key not in st.session_state:
-            st.session_state[key] = {}
-    if "page" not in st.session_state:
-        st.session_state.page = 0
-
-
-init_state()
-
-# 다른 곳에서 "이 페이지로 이동" 요청이 있으면 사이드바가 만들어지기 전에 처리
-if "goto" in st.session_state:
-    st.session_state.page = st.session_state.pop("goto")
-
-
-# ------------------------------------------------------------
-# 8. 계산 도우미 함수들
-# ------------------------------------------------------------
-def stage_label(track, page):
-    """page 번호(1~7)에 해당하는 단계 이름"""
-    lessons = TRACKS[track]["lessons"]
-    if page == 7:
-        return "최종 확인 테스트"
-    lesson = lessons[(page - 1) // 2]
-    return f"{lesson['short']} " + ("개념·연습" if page % 2 == 1 else "퀴즈")
-
-
-def star_labels(track):
-    names = []
-    for page in range(1, 8):
-        if page == 7:
-            names.append("최종")
-        else:
-            lesson = TRACKS[track]["lessons"][(page - 1) // 2]
-            names.append(lesson["short"] + (" 연습" if page % 2 == 1 else " 퀴즈"))
-    return names
-
-
-def is_unlocked(track, star_index):
-    return all(st.session_state.progress[track][:star_index])
-
-
-def light_star(track, star_index, score, message):
-    """별을 밝히고 점수를 기록한 뒤 화면을 새로고침한다."""
-    st.session_state.progress[track][star_index] = True
-    old = st.session_state.stage_scores[track][star_index]
-    st.session_state.stage_scores[track][star_index] = max(old or 0, round(score))
-    st.session_state.flash = {"msg": message, "balloons": star_index == 6}
-    st.rerun()
-
-
-def go_to(page):
-    st.session_state.goto = page
-    st.rerun()
-
-
-def clean(text):
-    """비교를 위해 공백·기호를 지우고 소문자로 바꾼다."""
-    return re.sub(r"[^0-9a-z가-힣ぁ-んァ-ン一-龥]", "", text.lower())
-
-
-def evaluate(alts, item):
-    """음성 인식 결과(alts)를 정답과 비교해 (점수, 메시지)를 돌려준다."""
-    if not alts:
-        return 0, "소리를 인식하지 못했어요. 다시 말해 보세요."
-    target = clean(item["target"])
-    conf = clean(item.get("conf") or "")
-    heard = alts[0].get("text", "")
-    top = clean(heard)
-    confidence = alts[0].get("conf") or 0.8
-    others = [clean(a.get("text", "")) for a in alts[1:]]
-
-    if top == target:
-        return round(75 + 25 * confidence), f"✅ 정확해요! 「{heard}」"
-    if target in others:
-        return 60, f"🙂 거의 맞았어요. 1순위는 「{heard}」였고 정답도 후보에 있었어요."
-    if conf and (top == conf or conf in others):
-        return 25, f"⚠️ 「{heard}」(으)로 들렸어요. {item['conf']} 소리와 섞였어요! 힌트를 다시 읽어 보세요."
-    similarity = difflib.SequenceMatcher(None, top, target).ratio()
-    return round(similarity * 50), f"🔁 「{heard}」(으)로 들렸어요. 다시 도전해 보세요!"
-
-
-# ------------------------------------------------------------
-# 9. 연습 문항 하나를 그리는 함수 (듣기 + 말하기 + 점수)
-# ------------------------------------------------------------
-def practice_item(track, scope, idx, item):
-    lang = TRACKS[track]["lang"]
-    key = f"{track}|{scope}|{idx}"
+def render_concept(pages, lang="en-US"):
+    slide_css()
+    n = len(pages)
+    pg = min(ss.page, n - 1)
+    P = pages[pg]
+    header(("영어" if ss.lang == "en" else "한국어") + " 발음 교실", [f"{k + 1:02d} {q['tab']}" for k, q in enumerate(pages)], pg)
     with st.container(border=True):
-        left, right = st.columns([1, 2])
-        with left:
-            st.markdown(f'<div class="bigword">{item["target"]}</div>', unsafe_allow_html=True)
-            st.caption("💡 " + item["hint"])
-        with right:
-            if st.session_state.get("self_mode"):
-                # 마이크를 쓰지 않는 자가 평가 모드
-                voice_box(target=item["target"], speak=item["target"], lang=lang,
-                          mode="listen", key="voice_" + key, default=None)
-                choice = st.radio("내 발음은?", list(SELF_LEVELS), horizontal=True, index=None,
-                                  key="self_" + key)
-                if st.button("점수 기록", key="selfbtn_" + key):
-                    if choice is None:
-                        st.warning("먼저 평가를 골라 주세요.")
-                    else:
-                        score = SELF_LEVELS[choice]
-                        st.session_state.attempts[key] = {"score": score, "msg": f"📝 자가 평가: {choice}"}
-                        st.session_state.best[key] = max(st.session_state.best.get(key, 0), score)
-            else:
-                res = voice_box(target=item["target"], speak=item["target"], lang=lang,
-                                mode="both", key="voice_" + key, default=None)
-                # 새로운 인식 결과가 왔을 때만 채점 (t = 시각 도장)
-                if res and res.get("t") != st.session_state.seen.get(key):
-                    st.session_state.seen[key] = res.get("t")
-                    score, msg = evaluate(res.get("alts", []), item)
-                    st.session_state.attempts[key] = {"score": score, "msg": msg}
-                    st.session_state.best[key] = max(st.session_state.best.get(key, 0), score)
-
-        attempt = st.session_state.attempts.get(key)
-        if attempt:
-            st.write(attempt["msg"] + f"  (이번 {attempt['score']}점)")
-        if key in st.session_state.best:
-            st.progress(st.session_state.best[key] / 100, text=f"최고 점수 {st.session_state.best[key]}점")
+        st.markdown(f"<h2 style='color:{BURGUNDY};margin:0 0 6px'>{P['t']}</h2>", unsafe_allow_html=True)
+        L, R = st.columns([5, 6])
+        with L:
+            for line in P["lines"]:
+                st.markdown(line)
+            listen(P["words"], lang)
+        with R:
+            st.markdown(P["vis"](), unsafe_allow_html=True)
+    st.markdown(f"<div class='tip'>💡 {P['tip']}</div>", unsafe_allow_html=True)
+    c = st.columns([1, 1, 1])
+    if pg > 0:
+        c[0].button("← 이전", on_click=pg_move, args=(-1,), key=f"pv{pg}", width="stretch")
+    if pg < n - 1:
+        c[2].button("다음 →", on_click=pg_move, args=(1,), key=f"nx{pg}", width="stretch")
+    else:
+        c[2].button("개념 완료 ✓", on_click=finish_step, key="cdone", width="stretch")
 
 
-def practice_average(track, scope, count):
-    """모든 문항을 시도했으면 평균 점수, 아니면 None"""
-    scores = [st.session_state.best.get(f"{track}|{scope}|{i}") for i in range(count)]
-    if any(s is None for s in scores):
-        return None
-    return sum(scores) / count
+# ---- 연습 화면 내용 ----
+def rl_item(w, mean, pos, ipa, kind):
+    if kind == "r":
+        tip, wrong = "r은 혀끝이 입천장에 닿지 않아요.", "l처럼 혀끝이 윗잇몸에 닿았어요."
+        ask, model = "혀끝이 어디에 닿았나요? 닿지 않게 다시 해 볼까요?", "입술을 살짝 모으고 혀를 뒤로 당기며 시작해요."
+    elif kind == "l":
+        tip, wrong = "l은 혀끝이 윗잇몸에 닿아요.", "r처럼 혀끝이 닿지 않았어요."
+        ask, model = "혀끝이 윗잇몸에 닿았나요? 다시 해 볼까요?", "혀끝을 윗잇몸에 딱 붙인 채 소리를 내요."
+    else:
+        tip, wrong = "r과 l을 구분해서 말해요.", "r과 l 중 일부가 같은 소리로 들렸어요."
+        ask, model = "어느 소리가 r이고 어느 소리가 l인지 다시 확인해 볼까요?", "r은 혀를 말고, l은 혀끝을 윗잇몸에 붙여요."
+    return dict(w=w, mean=mean, pos=pos, ipa=ipa, tip=tip, wrong=wrong, ask=ask, model=model)
 
 
-# ------------------------------------------------------------
-# 10. 퀴즈를 그리는 함수들
-# ------------------------------------------------------------
-def render_questions(track, prefix, questions):
-    """문제를 화면에 그리고, 선택한 답 목록과 채점 결과를 돌려준다."""
-    lang = TRACKS[track]["lang"]
-    attempt = st.session_state.quiz_attempt.get(prefix, 0)
-    result = st.session_state.quiz_result.get(prefix)
-    answers = []
-    for i, q in enumerate(questions):
-        with st.container(border=True):
-            st.markdown(f"**Q{i + 1}. {q['q']}**")
-            if q.get("speak"):
-                voice_box(target=q["speak"], speak=q["speak"], lang=lang, mode="listen",
-                          key=f"qv_{prefix}_{i}_{attempt}", default=None)
-            answer = st.radio("보기", q["options"], index=None, key=f"q_{prefix}_{i}_{attempt}",
-                              label_visibility="collapsed", disabled=result is not None)
-            answers.append(answer)
-            if result is not None:
-                if result[i]:
-                    st.success("정답! " + q["why"])
+RL_ITEMS = [rl_item("right", "옳은, 오른쪽", "형용사", "/raɪt/", "r"),
+            rl_item("light", "빛, 가벼운", "명사", "/laɪt/", "l"),
+            rl_item("rice", "쌀", "명사", "/raɪs/", "r"),
+            rl_item("lice", "이(벌레)", "명사", "/laɪs/", "l"),
+            rl_item("curriculum", "교육과정", "명사", "/kəˈrɪkjələm/", "b"),
+            rl_item("Charging bus card", "버스 카드 충전하기", "구", "/ˈtʃɑːrdʒɪŋ bʌs kɑːrd/", "b"),
+            rl_item("There are a lot of people", "사람이 많아요", "문장", "/ðɛr ɑːr ə lɒt əv ˈpiːpəl/", "b")]
+EI_PAIRS = [("bed", "침대", "/bɛd/", "bid", "입찰", "/bɪd/"), ("pen", "펜", "/pɛn/", "pin", "핀", "/pɪn/"),
+            ("set", "놓다", "/sɛt/", "sit", "앉다", "/sɪt/"), ("men", "남자들", "/mɛn/", "min", "(이름)", "/mɪn/"),
+            ("pet", "애완동물", "/pɛt/", "pit", "구덩이", "/pɪt/"), ("bet", "내기", "/bɛt/", "bit", "조금", "/bɪt/")]
+EI_ITEMS = [dict(p=[(a, b, c, "e"), (d, e, f, "i")]) for a, b, c, d, e, f in EI_PAIRS]
+SYL_ITEMS = [
+    dict(w="SPEAK", q="음절 수는?", opts=["1개", "2개"], ans=0, why="ea가 /iː/ 한 소리라서 1음절이에요. (모음 소리 1개)"),
+    dict(w="SEASHELL", q="알맞은 경계는?", opts=["SEA | SHELL", "SE | ASHELL"], ans=0, why="합성어는 의미 단위로 나눠요."),
+    dict(w="REPLAY", q="알맞은 경계는?", opts=["RE | PLAY", "REP | LAY"], ans=0, why="접두사 re와 어근 play를 나눠요."),
+    dict(w="PILOT", q="알맞은 경계는?", opts=["PI | LOT", "PIL | OT"], ans=0, why="모음 사이 자음 1개는 보통 뒤 음절로 가요."),
+    dict(w="CAKE", q="음절 수는?", opts=["1개", "2개"], ans=0, why="끝의 e는 소리가 나지 않아서 1음절이에요."),
+]
+
+
+def feedback(s, it=None):
+    st.progress(s / 100, text=f"일치율 {s}%")
+    if s >= 60:
+        st.success("좋아요! 잘 발음했어요.")
+    elif it:
+        st.warning(f"① 오류 안내: {it['wrong']}\n\n② 다시 해 볼까요? {it['ask']}\n\n③ 이렇게 해 봐요: {it['model']}")
+
+
+def practice_rec(it, idx):
+    st.markdown(big(it["w"], 2.4) + f"<p class='center'>{it['ipa']} · {it['pos']} · {it['mean']}</p>"
+                + (f"<p class='center'><b>{it['q']}</b></p>" if it.get("q") else ""), unsafe_allow_html=True)
+    listen([it["w"]], it.get("lang", "en-US"))
+    a = st.audio_input("녹음하기", key=f"a{ss.step}_{idx}_{ss.rnd}")
+    if not a:
+        return False
+    s, _ = score_audio(a, bump(1, 0.7))
+    ss.ps[idx] = s
+    feedback(s, it)
+    if it.get("checks"):
+        st.markdown("**확인할 항목:** " + " · ".join("☐ " + c_ for c_ in it["checks"]))
+    return True
+
+
+def practice_pair(it, idx):
+    k = f"{ss.step}_{idx}_{ss.rnd}"
+    hint = st.toggle("힌트: 소리 길이 보기", key=f"h{k}")
+    words = [(p[0], p[3]) for p in it["p"]]
+    html = ""
+    for w, v in words:
+        shown = stretch(w, v, 0.6 if v == "i" else 1.5) if hint else w
+        html += big(shown, 2.6)
+    st.markdown(html, unsafe_allow_html=True)
+    tgt = st.radio("녹음할 단어", [0, 1], format_func=lambda j: f"{it['p'][j][0]}  {it['p'][j][2]} ({it['p'][j][1]})",
+                   horizontal=True, key=f"r{k}")
+    w, mean, ipa, v = it["p"][tgt]
+    hi = v == "i"
+    rt, rm = bump(0.9 if hi else 0.55, 0.5 if hi else 0.7), bump(0.35 if hi else 0.8, 0.5 if hi else 0.7)
+    a = st.audio_input("녹음하기", key=f"a{k}_{tgt}")
+    if not a:
+        return False
+    s, e = score_audio(a, rt)
+    ss.ps[idx] = s
+    if e:
+        ut, um = [x * 0.9 for x in e], [x * (0.35 if hi else 0.8) for x in e]
+        st.markdown(graph_svg(rm, um) + "<p>곡선과 그 대칭 곡선 사이 = 입이 벌어진 모양이에요. 오른쪽 타원은 입 모양의 움직임이에요.</p>",
+                    unsafe_allow_html=True)
+    it2 = dict(wrong="모음 길이와 입 모양이 목표와 달랐어요.", ask="이 단어의 모음이 길어야 할까요, 짧아야 할까요?",
+               model="/iː/는 길게·입을 작게, /ɪ/는 짧게·혀를 조금 낮게 해요.")
+    feedback(s, it2)
+    return True
+
+
+def practice_quiz(it, idx):
+    st.markdown(big(it["w"], 2.8), unsafe_allow_html=True)
+    c = st.radio(it["q"], it["opts"], index=None, key=f"q{ss.step}_{idx}_{ss.rnd}", horizontal=True)
+    if c is None:
+        return False
+    ok = c == it["opts"][it["ans"]]
+    ss.ps[idx] = 100 if ok else 0
+    (st.success if ok else st.error)(("정답이에요! " if ok else "아쉬워요. ") + it["why"])
+    return True
+
+
+def adv():
+    ss.pi += 1
+
+
+def back():
+    ss.pi -= 1
+
+
+def redo(weak):
+    ss.pact, ss.pi, ss.rnd = weak, 0, ss.rnd + 1
+
+
+def render_practice(items, fn):
+    slide_css()
+    if ss.pact is None:
+        ss.pact, ss.pi, ss.ps = list(range(len(items))), 0, {}
+    act = ss.pact
+    if ss.pi >= len(act):
+        weak = [i for i in act if ss.ps.get(i, 0) < 60]
+        st.markdown(f"<h2 class='center' style='color:{BURGUNDY}'>연습 끝!</h2>", unsafe_allow_html=True)
+        if weak:
+            names = [items[i].get("w") or items[i]["p"][0][0] + "/" + items[i]["p"][1][0] for i in weak]
+            st.warning("부족한 발음: " + ", ".join(names))
+            st.markdown("**부족한 발음을 다시 학습할까요?**")
+            c = st.columns(3)
+            c[0].button("네, 다시 학습", on_click=redo, args=(weak,), key="redo", width="stretch")
+            c[1].button("아니요, 단계 완료", on_click=finish_step, key="skip", width="stretch")
+            c[2].button("홈으로 돌아가기", on_click=go_home, key="pe_home1", width="stretch")
+        else:
+            st.success("모두 통과했어요!")
+            c = st.columns(2)
+            c[0].button("홈으로 돌아가기", on_click=go_home, key="pe_home2", width="stretch")
+            c[1].button("단계 완료 ✓", on_click=finish_step, key="pdone", width="stretch")
+        return
+    idx = act[ss.pi]
+    header(("영어" if ss.lang == "en" else "한국어") + " 발음 교실 · 연습", [str(k + 1) for k in range(len(act))], ss.pi)
+    with st.container(border=True):
+        done = fn(items[idx], idx)
+    it = items[idx]
+    tip = it.get("tip") or ("두 단어의 모음 길이와 혀 높이를 비교해 봐요." if "p" in it else "모음 소리 하나가 음절 하나예요.")
+    st.markdown(f"<div class='tip'>💡 유의할 점: {tip}</div>", unsafe_allow_html=True)
+    c = st.columns([1, 1, 1])
+    if ss.pi > 0:
+        c[0].button("← 이전", on_click=back, key=f"pb{ss.step}_{idx}_{ss.rnd}", width="stretch")
+    c[2].button("다음 →" if done else "건너뛰기 →", on_click=adv,
+                key=f"n{ss.step}_{idx}_{ss.rnd}", width="stretch")
+
+
+# ------------------------------------------------------------------
+# 8. 한국어 트랙 (단계 1~6): 일본인 학습자를 위한 한국어 발음 교실
+# ------------------------------------------------------------------
+def tissue_svg(label, ang, note):
+    return ('<div style="display:inline-block;width:48%;text-align:center"><svg viewBox="0 0 200 140" width="100%">'
+            '<circle cx="35" cy="75" r="28" fill="#f1d3b3" stroke="#7B1E2E" stroke-width="2"/>'
+            '<ellipse cx="58" cy="78" rx="6" ry="4" fill="#7B1E2E"/>'
+            f'<rect x="82" y="30" width="14" height="95" rx="4" fill="#ffd9dd" stroke="#7B1E2E" '
+            f'transform="rotate({-ang} 89 30)"/></svg><b>{label}</b><br>{note}</div>')
+
+
+def wave_svg(ref, usr):
+    p = ['<svg viewBox="0 0 700 140" width="100%" style="max-height:24vh">']
+    for vals, col in ((ref, "#bbb"), (usr, BURGUNDY)):
+        pts = " ".join(f"{j * 700 / 39:.0f},{120 - v * 100:.0f}" for j, v in enumerate(vals))
+        p.append(f'<polyline points="{pts}" fill="none" stroke="{col}" stroke-width="3"/>')
+    return "".join(p) + "</svg>"
+
+
+def vot_svg():
+    p = ['<svg viewBox="0 0 400 150" width="100%">']
+    for k, (n, w) in enumerate((("평음 (바)", 55), ("격음 (파)", 170))):
+        y = 20 + k * 65
+        p.append(f'<text x="0" y="{y + 20}" font-size="13">{n}</text>')
+        p.append(f'<rect x="90" y="{y}" width="8" height="30" fill="#7B1E2E"/>')
+        p.append(f'<rect x="98" y="{y + 8}" width="{w}" height="14" fill="#f0b4bd"/>')
+        p.append(f'<text x="{104 + w}" y="{y + 20}" font-size="12">VOT</text>')
+    p.append('<text x="90" y="148" font-size="11">터짐 → 기식 구간 → 성대 진동 시작</text></svg>')
+    return "".join(p)
+
+
+def vowel_svg():
+    def chart(title, pts):
+        s = (f'<div style="display:inline-block;width:48%;text-align:center"><b>{title}</b>'
+             '<svg viewBox="0 0 200 150" width="100%"><rect x="10" y="10" width="180" height="120" fill="#fffafb" stroke="#ecd0d5"/>')
+        for t, x, y in pts:
+            s += f'<text x="{x}" y="{y}" text-anchor="middle" font-size="22" fill="#7B1E2E">{t}</text>'
+        return s + '<text x="14" y="146" font-size="10">앞</text><text x="178" y="146" font-size="10">뒤</text></svg></div>'
+    ja = [("い", 40, 40), ("う", 160, 40), ("え", 50, 85), ("お", 150, 90), ("あ", 100, 122)]
+    ko = [("ㅣ", 35, 40), ("ㅡ", 105, 40), ("ㅜ", 165, 40), ("ㅔ", 45, 85), ("ㅓ", 115, 88), ("ㅗ", 165, 88), ("ㅏ", 100, 122)]
+    return chart("일본어 모음", ja) + chart("한국어 단모음", ko) + "<p class='center'>위 = 혀가 높아요 · 아래 = 낮아요</p>"
+
+
+KO_CONS_PAGES = [
+    dict(t="평음과 격음, 바람 세기가 달라요",
+         lines=["**평음** ㅂ ㄷ ㄱ ㅈ ㅅ: 바람이 약해요.", "**격음** ㅍ ㅌ ㅋ ㅊ: 바람이 강하게 터져 나와요.",
+                "입 앞에 손가락이나 휴지를 대고 발음해 보세요."],
+         words=["바다", "파다"],
+         vis=lambda: tissue_svg("평음 (바다)", 10, "휴지가 살짝 움직여요") + tissue_svg("격음 (파다)", 55, "휴지가 크게 날려요")),
+    dict(t="짝으로 비교해요",
+         lines=["ㄱ↔ㅋ 가/카 · ㄷ↔ㅌ 다/타", "ㅂ↔ㅍ 바/파 · ㅈ↔ㅊ 자/차",
+                "단어로도 비교해요: 바다/파다 · 달/탈 · 자다/차다 · 비다/피다"],
+         words=["바다", "파다", "달", "탈", "자다", "차다"],
+         vis=lambda: big("바다 ≠ 파다", 2.8) + "<p class='center'>뜻이 달라져요: 바다(sea) / 파다(dig)</p>"),
+    dict(t="소리 분석, 이렇게 봐요",
+         lines=["**VOT**: 파열(터짐)부터 성대 진동이 시작될 때까지의 시간이에요.", "격음은 VOT가 길고 기식이 강해요.",
+                "**F0**: 모음의 음높이 변화를 보는 참고 자료예요.",
+                "※ VOT와 F0는 학습 참고 자료이고, 단일 값만으로 정답을 판정하지 않아요."],
+         words=["바다", "파다"], vis=vot_svg),
+]
+KO_VOW_PAGES = [
+    dict(t="먼저, 두 언어의 모음은 어떻게 다를까요?",
+         lines=["일본어 「う」는 보통 /ɯ/로 표기하며 강한 원순성이 없어요.",
+                "한국어 모음은 혀의 앞뒤·높이와 입술 모양을 함께 봐요.",
+                "「う」와 ㅜ는 비슷하지만 입술 모양에 차이가 있어요.", "각 모음을 눌러 소리를 들어 보세요."],
+         words=["이", "으", "우", "에", "어", "오", "아"], vis=vowel_svg),
+    dict(t="입술 모양과 혀의 위치가 발음을 바꿔요",
+         lines=["**ㅜ** 입술을 둥글게 오므려요 (부족하면 ㅡ와 혼동)", "**ㅡ** 입술을 둥글게 하지 않아요",
+                "**ㅗ** 입술은 둥글게, 입은 비교적 좁게", "**ㅓ** 입을 더 열고 둥글게 하지 않아요 (ㅗ와 혼동 주의)",
+                "**ㅘ ㅝ ㅙ ㅞ** 앞의 /w/ 활음 탈락 주의 · **ㅢ** /w/로 바뀌는 활음 대치 주의 · **ㅖ** 예·세계·계절"],
+         words=["굴", "글", "곰", "검", "금", "과일", "원", "왜", "웨이터", "의사", "의자", "예", "세계"],
+         vis=lambda: big("ㅜ · ㅡ<br>ㅗ · ㅓ", 2.4) + "<p class='center'>이중모음: 과일 · 원 · 왜 · 웨이터 · 의사</p>"),
+]
+KO_SYL_PAGES = [
+    dict(t="받침 ㅁ ㄴ ㅇ을 구분해요",
+         lines=["일본어 ん은 하나지만 한국어 받침은 셋이에요.", "**감** 입술이 닫혀요 · **간** 혀끝이 윗잇몸 · **강** 혀뿌리가 올라가요",
+                "내 녹음을 다시 들으며 받침 소리가 어디서 끝나는지 확인해요."],
+         words=["감", "간", "강"], vis=lambda: big("감 · 간 · 강", 2.8)),
+    dict(t="받침도 한 박자예요",
+         lines=["노래방 가사처럼 한 글자 = 한 박자예요.", "받침을 따로 늘이거나 새 박자로 세지 않아요.",
+                "일본어 パン · かん 처럼 ん으로 끝나는 말과 비교해 봐요."],
+         words=["사랑", "친구", "공부"], vis=lambda: big("사 · 랑<br>1박 · 1박", 2.6)),
+]
+for _pages, _tabs, _tips in (
+    (KO_CONS_PAGES, ["바람 세기", "짝 비교", "소리 분석"], ["평음은 약하게, 격음은 강하게 바람을 내요.", "소리 하나 차이로 뜻이 달라져요.", "VOT가 길수록 격음에 가까워요."]),
+    (KO_VOW_PAGES, ["도입", "제시"], ["일본어 う와 한국어 ㅜ는 입술 모양이 달라요.", "활음(/w/)이 약해지거나 바뀌지 않게 주의해요."]),
+    (KO_SYL_PAGES, ["받침 구분", "박자"], ["받침 소리가 끝나는 위치를 느껴 봐요.", "한 글자는 한 박자로 읽어요."]),
+):
+    for _p, _t, _tip in zip(_pages, _tabs, _tips):
+        _p["tab"], _p["tip"] = _t, _tip
+
+
+def ko_item(w, mean, pos, ipa, tip, q="", checks=None):
+    return dict(kind="rec", lang="ko-KR", w=w, mean=mean, pos=pos, ipa=ipa, tip=tip, q=q, checks=checks,
+                wrong=f"{tip} 부분이 목표와 달랐어요.", ask="어디가 달랐는지 다시 들어 보고 해 볼까요?", model=tip)
+
+
+def ko_listen(say, opts, tip):
+    ans = next(i for i, o in enumerate(opts) if o.split()[-1] == say)
+    return dict(kind="listen", w=say, say=say, opts=opts, ans=ans, tip=tip)
+
+
+def ko_pair(a, b, tip, cons=False, checks=None):
+    return dict(kind="pair", p=[a, b], tip=tip, cons=cons, checks=checks)
+
+
+VCHK = ["입술의 원순성", "혀의 높이", "활음의 연결 여부"]
+KO_CONS_ITEMS = [
+    ko_listen(s_, o_, "평음은 바람이 약하고, 격음은 바람이 강해요.") for s_, o_ in (
+        ("가", ["ㄱ  가", "ㅋ  카"]), ("타", ["ㄷ  다", "ㅌ  타"]), ("바", ["ㅂ  바", "ㅍ  파"]), ("차", ["ㅈ  자", "ㅊ  차"]),
+        ("카", ["ㄱ  가", "ㅋ  카"]), ("다", ["ㄷ  다", "ㅌ  타"]), ("파", ["ㅂ  바", "ㅍ  파"]), ("자", ["ㅈ  자", "ㅊ  차"]))
+] + [
+    ko_pair(("바다", "넓고 짠물이 있는 곳"), ("파다", "땅에 구멍을 내다"), "격음 ㅍ은 입 앞 손가락에 센 바람이 느껴져요.", True),
+    ko_pair(("비다", "속이 없다"), ("피다", "꽃이 열리다"), "격음은 바람이 강해요.", True),
+    ko_pair(("달", "하늘의 달"), ("탈", "얼굴에 쓰는 탈"), "ㅌ은 더 센 바람이 나와요.", True),
+    ko_pair(("자다", "잠을 자다"), ("차다", "발로 차다"), "ㅊ은 더 센 바람이 나와요.", True),
+    ko_pair(("불", "타는 불"), ("풀", "자라는 풀"), "ㅍ은 입술을 터뜨리며 센 바람을 내요.", True),
+]
+KO_VOW_ITEMS = [
+    ko_pair(("굴", "oyster"), ("글", "text"), "ㅜ는 입술을 둥글게 오므려요.", checks=VCHK),
+    ko_pair(("곰", "bear"), ("검", "sword"), "ㅗ는 입술을 둥글게, ㅓ는 입을 더 열어요.", checks=VCHK),
+    ko_pair(("곰", "bear"), ("금", "gold"), "ㅗ는 입술을 둥글게, ㅡ는 둥글게 하지 않아요.", checks=VCHK),
+    ko_pair(("검", "sword"), ("금", "gold"), "ㅓ는 입을 열고 ㅡ는 입술을 펴요.", checks=VCHK),
+    ko_item("과일", "fruit", "명사", "/kwa.il/", "ㅘ의 /w/ 활음이 사라지지 않게 해요.", "/w/가 자연스럽게 이어지나요?", VCHK),
+    ko_item("원", "circle", "명사", "/wʌn/", "첫 활음 /w/가 들리게 해요.", "첫 활음이 들리나요?", VCHK),
+    ko_item("왜", "why", "부사", "/wɛ/", "두 소리가 끊기지 않게 이어요.", "두 소리가 끊기지 않나요?", VCHK),
+    ko_item("웨이터", "waiter", "명사", "/wei.tʰʌ/", "입 모양이 자연스럽게 바뀌게 해요.", "입 모양이 자연스럽게 바뀌나요?", VCHK),
+    ko_item("의사", "doctor", "명사", "/ɰi.sa/", "ㅢ의 첫 소리가 /w/처럼 바뀌지 않게 해요.", "첫 요소가 /w/로 바뀌지 않나요?", VCHK),
+    ko_item("저는 손이 커요", "I have big hands", "문장", "/tɕʌ.nɯn so.ni kʰʌ.jo/", "ㅓ와 ㅗ를 구분해요.",
+            "최종 미션: 문장 발음하기 (먼저 목표 단어를 하나씩 연습해요)", VCHK),
+]
+KO_SYL_ITEMS = [ko_item(w, m, "명사", ipa, t) for w, m, ipa, t in (
+    ("감", "persimmon", "/kam/", "ㅁ: 입술을 닫고 끝내요."), ("간", "liver", "/kan/", "ㄴ: 혀끝을 윗잇몸에 대요."),
+    ("강", "river", "/kaŋ/", "ㅇ: 혀뿌리를 올리고 입은 열어요."), ("밤", "night", "/pam/", "ㅁ: 입술을 닫고 끝내요."),
+    ("방", "room", "/paŋ/", "ㅇ: 입은 열고 코로 소리를 내요."), ("사랑", "love", "/sa.raŋ/", "한 글자 = 한 박자로 읽어요."),
+    ("친구", "friend", "/tɕʰin.ku/", "ㄴ 받침이 별도 박자가 되지 않게 해요."))]
+KO_SYL_ITEMS.append(ko_item("저는 감이 좋아요", "I like persimmons", "문장", "/tɕʌ.nɯn ka.mi tɕo.a.jo/", "받침 소리를 구분해 이어 읽어요."))
+
+
+def retry():
+    ss.rnd += 1
+
+
+def practice_ko(it, idx):
+    k = f"{ss.step}_{idx}_{ss.rnd}"
+    if it["kind"] == "rec":
+        return practice_rec(it, idx)
+    if it["kind"] == "listen":
+        st.markdown(big("🎧 듣고 고르기", 2) + "<p class='center'>들린 첫소리와 같은 자음을 골라요. 실수하면 한 번 더 들어 봐요.</p>",
+                    unsafe_allow_html=True)
+        listen([it["say"]], "ko-KR", hide=True)
+        c = st.radio("들린 소리를 고르세요", it["opts"], index=None, key=f"q{k}", horizontal=True)
+        if c is None:
+            return False
+        ok = c == it["opts"][it["ans"]]
+        ss.ps[idx] = 100 if ok else 0
+        (st.success if ok else st.error)(("정답이에요! " if ok else "아쉬워요. ") + f"정답은 {it['opts'][it['ans']]}이에요. {it['tip']}")
+        return True
+    st.markdown("".join(big(p[0], 2.2) + f"<p class='center'>{p[1]}</p>" for p in it["p"]), unsafe_allow_html=True)
+    listen([p[0] for p in it["p"]], "ko-KR")
+    if it.get("cons"):
+        if not st.checkbox("✓ 뜻을 확인했어요 (확인한 뒤 녹음해요)", key=f"m{k}"):
+            return False
+        st.info("기식 확인: 입 앞에 손가락을 대고 약한 공기(평음), 강한 공기(격음)를 느껴 보세요. "
+                "이어 연습할 대조 단어: 바다/파다 · 달/탈 · 자다/차다")
+    t = st.radio("녹음할 단어", [0, 1], format_func=lambda j: it["p"][j][0], horizontal=True, key=f"r{k}")
+    a = st.audio_input("녹음하기", key=f"a{k}_{t}")
+    if not a:
+        return False
+    s, e = score_audio(a, bump(1, 0.6))
+    ss.ps[idx] = s
+    if e:
+        st.markdown(wave_svg(bump(1, 0.6), e) + "<p>회색 = 기준 소리 모양, 붉은 선 = 내 소리</p>", unsafe_allow_html=True)
+        if it.get("cons"):
+            sec = envelope(a)[1]
+            on, pk = next((j for j, v in enumerate(e) if v > 0.15), 0), e.index(max(e))
+            avg = int(sum(ss.ps.values()) / len(ss.ps))
+            c = st.columns(3)
+            c[0].metric("VOT 추정(참고)", f"{max(0, int((pk - on) * sec / 40 * 1000))} ms")
+            c[1].metric("파형 일치율", f"{s}%")
+            c[2].metric("일관성(이번 단계 평균)", f"{avg}%")
+            st.caption("VOT: 파열부터 성대 진동 시작까지의 시간 · 일관성: 여러 단어에서 평음/격음 구별이 유지되는지 확인해요. "
+                       "VOT와 F0는 학습 참고 자료이며, 단일 값만으로 발음 정답을 판정하지 않아요.")
+    feedback(s, dict(wrong="목표 소리와 달랐어요.", ask="입 모양과 바람을 다시 확인하고 해 볼까요?", model=it["tip"]))
+    if it.get("checks"):
+        st.markdown("**확인할 항목:** " + " · ".join("☐ " + c_ for c_ in it["checks"]))
+    st.button("다시 발음하기", on_click=retry, key=f"rt{k}")
+    return True
+
+
+def render_ko(i):
+    if i == 0: render_concept(KO_CONS_PAGES, "ko-KR")
+    elif i == 1: render_practice(KO_CONS_ITEMS, practice_ko)
+    elif i == 2: render_concept(KO_VOW_PAGES, "ko-KR")
+    elif i == 3: render_practice(KO_VOW_ITEMS, practice_ko)
+    elif i == 4: render_concept(KO_SYL_PAGES, "ko-KR")
+    elif i == 5: render_practice(KO_SYL_ITEMS, practice_ko)
+
+
+def render_en(i):
+    if i == 0: render_concept(RL_PAGES)
+    elif i == 1: render_practice(RL_ITEMS, practice_rec)
+    elif i == 2: render_concept(EI_PAGES)
+    elif i == 3: render_practice(EI_ITEMS, practice_pair)
+    elif i == 4: render_concept(SYL_PAGES)
+    elif i == 5: render_practice(SYL_ITEMS, practice_quiz)
+
+
+# ------------------------------------------------------------------
+# 9. 최종 테스트 (단계 7) - 영어/한국어 공통
+# ------------------------------------------------------------------
+STATS_FILE = Path(__file__).parent / "stats.json"   # 전체 학습자 정답률 (같은 컴퓨터에 쌓여요)
+
+
+def load_stats():
+    try:
+        return json.loads(STATS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_stats(m):
+    try:
+        STATS_FILE.write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+# k: listen(듣고 고르기) / mc(선택형) / rec(발음하기), lv: 난이도 1~3, s: 관련 개념 단계 번호
+EN_Q = [
+    dict(k="listen", lv=1, q="들린 단어를 고르세요", say="light", opts=["right", "light"], ans=1,
+         c="r과 l은 다른 소리예요. l은 혀끝이 윗잇몸에 닿아요.", s=0),
+    dict(k="mc", lv=1, q="SPEAK은 몇 음절일까요?", opts=["1음절", "2음절"], ans=0,
+         c="모음 소리 하나가 음절 하나예요. ea는 /iː/ 한 소리예요.", s=4),
+    dict(k="mc", lv=1, q="eat과 it 중 더 길게 발음하는 것은?", opts=["eat", "it"], ans=0,
+         c="eat /iː/는 길고 입을 작게, it /ɪ/는 짧아요.", s=2),
+    dict(k="mc", lv=2, q="혀끝이 윗잇몸에 닿는 소리는?", opts=["r", "l"], ans=1,
+         c="l은 혀끝이 윗잇몸에 닿고, r은 닿지 않고 뒤로 말려요.", s=0),
+    dict(k="mc", lv=2, q="Even의 첫 e 소리는?", opts=["/ɛ/", "/iː/", "/ɪ/"], ans=1,
+         c="even, equal은 /iː/, egg, end는 /ɛ/, English는 /ɪ/예요.", s=2),
+    dict(k="mc", lv=2, q="PILOT의 알맞은 음절 경계는?", opts=["PI | LOT", "PIL | OT"], ans=0,
+         c="모음 사이 자음 1개는 보통 뒤 음절로 가요.", s=4),
+    dict(k="rec", lv=2, q="소리 내어 읽어 보세요", w="bit", c="/ɪ/는 짧게, 혀를 조금 낮게 해요.", s=2),
+    dict(k="rec", lv=3, q="소리 내어 읽어 보세요", w="rice", c="r은 혀끝이 닿지 않게 뒤로 말아요.", s=0),
+    dict(k="mc", lv=3, q="TEACHER의 알맞은 음절 경계는?", opts=["TEACH | ER", "TEA | CHER"], ans=0,
+         c="접미사 -er는 어근과 나눠요.", s=4),
+    dict(k="rec", lv=3, q="문장을 읽어 보세요", w="There are a lot of people", c="r과 l을 구분해서 읽어요.", s=0),
+]
+KO_Q = [
+    dict(k="listen", lv=1, q="들린 단어를 고르세요", say="바다", opts=["바다", "파다"], ans=0,
+         c="평음 ㅂ은 바람이 약해요.", s=0),
+    dict(k="mc", lv=1, q="바람이 더 강하게 나오는 소리는?", opts=["ㅂ", "ㅍ"], ans=1,
+         c="격음 ㅍ ㅌ ㅋ ㅊ은 바람이 강하게 터져 나와요.", s=0),
+    dict(k="mc", lv=1, q="입술을 둥글게 오므리는 모음은?", opts=["ㅜ", "ㅡ"], ans=0,
+         c="한국어 ㅜ는 입술을 둥글게 오므려요. 약하면 ㅡ처럼 들려요.", s=2),
+    dict(k="mc", lv=2, q="입술이 닫히며 끝나는 받침이 있는 글자는?", opts=["감", "간", "강"], ans=0,
+         c="감은 입술이 닫히고, 간은 혀끝이 윗잇몸에, 강은 혀뿌리가 올라가요.", s=4),
+    dict(k="listen", lv=2, q="들린 단어를 고르세요", say="탈", opts=["달", "탈"], ans=1,
+         c="격음 ㅌ은 평음 ㄷ보다 바람이 강해요.", s=0),
+    dict(k="mc", lv=2, q="‘왜’를 발음할 때 주의할 점은?", opts=["두 소리가 끊기지 않고 이어져요", "첫 활음을 빼고 읽어요"], ans=0,
+         c="ㅘ ㅝ ㅙ ㅞ에서 앞의 /w/ 활음이 사라지지 않게 해요.", s=2),
+    dict(k="rec", lv=2, q="소리 내어 읽어 보세요", w="파다", c="ㅍ은 센 바람이 나와요.", s=0),
+    dict(k="rec", lv=3, q="문장을 읽어 보세요", w="저는 손이 커요", c="ㅓ와 ㅗ를 구분해요.", s=2),
+    dict(k="mc", lv=3, q="‘사랑’은 몇 박자로 읽을까요?", opts=["2박자", "3박자"], ans=0,
+         c="한 글자는 한 박자예요. 받침을 따로 늘이지 않아요.", s=4),
+    dict(k="rec", lv=3, q="문장을 읽어 보세요", w="저는 감이 좋아요", c="받침 소리를 구분해 이어 읽어요.", s=4),
+]
+
+
+def t_submit(ok):
+    ss.t["a"][ss.t["q"]] = ok
+    ss.t["ph"] = "fb"
+
+
+def complete_final():
+    d, lang = ss.data, ss.lang
+    d["done"][lang][6] = True
+    if all(d["done"][lang]):
+        d["count"][lang] += 1
+        d["done"][lang] = [False] * 7
+        ss.fp = True            # 홈 버튼을 누르면 완주 화면으로 가요
+    d["last_step"] = None
+    touch()
+
+
+def t_next():
+    t = ss.t
+    if t["q"] >= 9:
+        m = load_stats()
+        L = m.setdefault(ss.lang, {})
+        for i, ok in enumerate(t["a"]):
+            c, n = L.get(str(i), [0, 0])
+            L[str(i)] = [c + (1 if ok else 0), n + 1]
+        save_stats(m)
+        t["ph"] = "res"
+        complete_final()
+    else:
+        t["q"] += 1
+        t["ph"] = "q"
+
+
+def t_goto(ph):
+    ss.t["ph"] = ph
+
+
+def retake():
+    ss.t = None
+    ss.tn = ss.get("tn", 0) + 1
+
+
+def t_jump(si):
+    t = ss.t
+    open_step(si)
+    ss.t = t
+    ss.rv = True
+
+
+def donut_svg(pct):
+    C = 2 * math.pi * 70
+    return ('<svg viewBox="0 0 200 200" width="230">'
+            '<circle cx="100" cy="100" r="70" fill="none" stroke="#d9534f" stroke-width="26"/>'
+            f'<circle cx="100" cy="100" r="70" fill="none" stroke="#2e9e5b" stroke-width="26" '
+            f'stroke-dasharray="{C * pct / 100:.1f} {C:.1f}" transform="rotate(-90 100 100)"/>'
+            f'<text x="100" y="108" text-anchor="middle" font-size="34" font-weight="800" fill="#333">{pct}%</text></svg>')
+
+
+def render_test():
+    slide_css()
+    lang = ss.lang
+    Q = EN_Q if lang == "en" else KO_Q
+    tts = "en-US" if lang == "en" else "ko-KR"
+    sub = ("영어" if lang == "en" else "한국어") + " 발음 교실 · 최종 테스트"
+    if ss.get("t") is None:
+        ss.t = dict(q=0, a=[None] * 10, ph="q")
+    t = ss.t
+    ph, q = t["ph"], t["q"]
+
+    if ph in ("q", "fb"):
+        header(sub, [f"{q + 1} / 10"], 0)
+        st.markdown(f"<div style='height:5px;background:#eee;border-radius:3px'><div style='width:{(q + (ph == 'fb')) * 10}%;"
+                    f"height:5px;background:{BURGUNDY};border-radius:3px'></div></div>", unsafe_allow_html=True)
+        Qd = Q[q]
+        stars = "★" * Qd["lv"] + "☆" * (3 - Qd["lv"])
+        if ph == "q":
+            with st.container(border=True):
+                st.markdown(f"<span style='color:{BURGUNDY};font-size:1.4rem'>{stars}</span> 난이도 · {Qd['q']}",
+                            unsafe_allow_html=True)
+                key = f"{ss.get('tn', 0)}_{q}"
+                if Qd["k"] == "rec":
+                    st.markdown(big(Qd["w"], 2.4), unsafe_allow_html=True)
+                    a = st.audio_input("녹음하기", key=f"ta{key}")
+                    ok = bool(a) and score_audio(a, bump(1, 0.7))[0] >= 60
+                    ready = bool(a)
                 else:
-                    st.error(f"오답이에요. 정답: {q['answer']} — {q['why']}")
-    return answers, result
-
-
-def grade_button(prefix, questions, answers):
-    if st.button("채점하기", type="primary", key=f"grade_{prefix}"):
-        if any(a is None for a in answers):
-            st.warning("모든 문제에 답해 주세요.")
+                    if Qd["k"] == "listen":
+                        listen([Qd["say"]], tts, hide=True)
+                    c = st.radio("답을 고르세요", Qd["opts"], index=None, key=f"tq{key}", horizontal=True)
+                    ready = c is not None
+                    ok = ready and c == Qd["opts"][Qd["ans"]]
+            st.button("답 체크", on_click=t_submit, args=(ok,), disabled=not ready, key=f"tb{key}")
         else:
-            st.session_state.quiz_result[prefix] = [a == q["answer"] for a, q in zip(answers, questions)]
-            st.rerun()
-
-
-def retry_button(prefix):
-    if st.button("🔄 다시 풀기", key=f"retry_{prefix}"):
-        st.session_state.quiz_result.pop(prefix, None)
-        st.session_state.quiz_attempt[prefix] = st.session_state.quiz_attempt.get(prefix, 0) + 1
-        st.rerun()
-
-
-# ------------------------------------------------------------
-# 11. 단계별 화면
-# ------------------------------------------------------------
-def page_practice_stage(track, lesson_index, star_index):
-    lesson = TRACKS[track]["lessons"][lesson_index]
-    st.subheader(f"⭐ {star_index + 1}단계 · {lesson['title']}")
-
-    view = st.radio("보기", ["📘 개념", "🎙️ 연습"], horizontal=True, label_visibility="collapsed",
-                    key=f"view_{track}_{star_index}")
-    if view == "📘 개념":
-        st.markdown(lesson["concept"])
-        VISUALS[lesson["visual"]]()
-        st.info("개념을 읽었다면 위쪽의 **🎙️ 연습**을 눌러 보세요!")
+            ok = t["a"][q]
+            st.markdown(big("✅ 정답이에요!" if ok else "❌ 아쉬워요", 2.4), unsafe_allow_html=True)
+            ans = Qd["w"] if Qd["k"] == "rec" else Qd["opts"][Qd["ans"]]
+            st.markdown(f"<p class='center'>정답/목표: <b>{ans}</b></p>", unsafe_allow_html=True)
+            tag = (f"<span style='font-size:.75rem;background:#fff;border:1px solid {BURGUNDY};"
+                   f"border-radius:8px;padding:1px 8px'>{STEPS[lang][Qd['s']]}</span>")
+            st.markdown(f"<div class='tip'>📘 관련 개념: {Qd['c']} {tag}</div>", unsafe_allow_html=True)
+            c_, n_ = load_stats().get(lang, {}).get(str(q), [0, 0])
+            rate = f"{round(c_ * 100 / n_)}% ({n_}회 응답)" if n_ else "아직 기록이 없어요"
+            st.markdown(f"<p class='center'>현재까지 전체 학습자 정답률: <b>{rate}</b></p>", unsafe_allow_html=True)
+            st.button("결과 보기 →" if q >= 9 else "다음 문제 →", on_click=t_next, key=f"tn{q}")
         return
 
-    st.caption("🔊 먼저 듣고, 🎤 말하기를 눌러 따라 말해 보세요. (Chrome/Edge 권장)")
-    items = lesson["items"]
-    scope = f"L{lesson_index}"
-    for idx, item in enumerate(items):
-        practice_item(track, scope, idx, item)
-
-    avg = practice_average(track, scope, len(items))
-    st.divider()
-    if st.session_state.progress[track][star_index]:
-        st.success("이미 밝힌 별이에요! 다음 단계로 가 볼까요?")
-        if st.button("다음 단계로 ▶", key=f"next_{track}_{star_index}"):
-            go_to(star_index + 2)
-    elif avg is None:
-        st.info("모든 단어를 한 번씩 말해 보면 별을 밝힐 수 있어요.")
-    elif avg >= PASS_PRACTICE:
-        st.success(f"평균 {avg:.0f}점! 합격이에요 🎉")
-        if st.button("⭐ 별 밝히기", type="primary", key=f"light_{track}_{star_index}"):
-            light_star(track, star_index, avg, f"⭐ {star_index + 1}번째 별이 밝아졌어요!")
-    else:
-        st.warning(f"평균 {avg:.0f}점이에요. {PASS_PRACTICE}점이 넘으면 별이 밝아져요. 점수가 낮은 단어를 다시 도전해 보세요!")
-
-
-def page_quiz_stage(track, lesson_index, star_index):
-    lesson = TRACKS[track]["lessons"][lesson_index]
-    st.subheader(f"⭐ {star_index + 1}단계 · {lesson['short']} 학습 확인 퀴즈")
-    prefix = f"{track}_quiz{lesson_index}"
-    questions = lesson["quiz"]
-    answers, result = render_questions(track, prefix, questions)
-
-    if result is None:
-        grade_button(prefix, questions, answers)
-        return
-
-    pct = sum(result) / len(result) * 100
-    st.metric("퀴즈 점수", f"{pct:.0f}점")
-    if st.session_state.progress[track][star_index]:
-        st.success("이미 밝힌 별이에요!")
-        if st.button("다음 단계로 ▶", key=f"next_{track}_{star_index}"):
-            go_to(star_index + 2)
-        retry_button(prefix)
-    elif pct >= PASS_QUIZ:
-        st.success("합격! 별을 밝혀요 🎉")
-        if st.button("⭐ 별 밝히기", type="primary", key=f"light_{track}_{star_index}"):
-            light_star(track, star_index, pct, f"⭐ {star_index + 1}번째 별이 밝아졌어요!")
-    else:
-        st.warning(f"{PASS_QUIZ}점 이상이면 합격이에요. 개념을 다시 보고 도전해 보세요!")
-        retry_button(prefix)
-
-
-def page_final(track):
-    st.subheader("🌟 7단계 · 최종 확인 테스트")
-    final = TRACKS[track]["final"]
-    st.caption("객관식 3문제 + 말하기 3문제의 평균이 70점 이상이면 마지막 별이 밝아져요.")
-
-    st.markdown("#### 파트 A · 객관식")
-    prefix = f"{track}_final_mcq"
-    answers, result = render_questions(track, prefix, final["mcq"])
-    if result is None:
-        grade_button(prefix, final["mcq"], answers)
-
-    st.markdown("#### 파트 B · 말하기")
-    for idx, item in enumerate(final["speak"]):
-        practice_item(track, "final", idx, item)
-
-    st.divider()
-    speak_scores = [st.session_state.best.get(f"{track}|final|{i}") for i in range(len(final["speak"]))]
-    if result is None or any(s is None for s in speak_scores):
-        st.info("객관식을 채점하고, 말하기 3개를 모두 시도하면 최종 점수가 계산돼요.")
-        return
-
-    all_scores = [100 if r else 0 for r in result] + speak_scores
-    total = sum(all_scores) / len(all_scores)
-    st.metric("최종 점수", f"{total:.0f}점")
-    if st.session_state.progress[track][6]:
-        st.success("🌟 북두칠성을 모두 밝혔어요! 대단해요!")
-    elif total >= PASS_FINAL:
-        st.success("합격! 마지막 별을 밝혀요 🌟")
-        if st.button("🌟 마지막 별 밝히기", type="primary", key="light_final"):
-            light_star(track, 6, total, "🌟 북두칠성이 완성되었어요!")
-    else:
-        st.warning("아쉬워요. 약한 부분을 다시 연습하고 도전해 보세요!")
-    if st.button("🔄 객관식 다시 풀기", key="retry_final"):
-        st.session_state.quiz_result.pop(prefix, None)
-        st.session_state.quiz_attempt[prefix] = st.session_state.quiz_attempt.get(prefix, 0) + 1
-        st.rerun()
-
-
-def page_home(track):
-    st.subheader("🌌 북두칠성을 밝혀 보세요")
-    done = st.session_state.progress[track]
-    st.write(
-        "별 7개는 **오류 3개 × (개념·연습 → 퀴즈)** 6단계와 **최종 테스트** 1단계예요. "
-        "한 단계를 통과할 때마다 별이 하나씩 밝아져요."
-    )
-    nxt = next((i for i, d in enumerate(done) if not d), None)
-    if nxt is None:
-        st.success("모든 별이 밝았어요! 🌟")
-    else:
-        st.info(f"다음 도전: **{stage_label(track, nxt + 1)}**")
-        if st.button("지금 도전하기 ▶", type="primary"):
-            go_to(nxt + 1)
-    st.markdown(
-        """
-**사용 팁**
-- Chrome 또는 Edge에서 열고, 마이크 권한을 허용해 주세요.
-- 마이크가 안 되면 왼쪽 사이드바에서 **자가 평가 모드**를 켜세요.
-"""
-    )
-
-
-# ------------------------------------------------------------
-# 12. 사이드바 (언어 선택, 메뉴, 점수)
-# ------------------------------------------------------------
-with st.sidebar:
-    st.title("🌌 language app")
-    track = st.selectbox("학습 트랙", list(TRACKS), format_func=lambda t: TRACKS[t]["label"], key="track")
-
-    def page_name(p):
-        if p == 0:
-            return "🌌 북두칠성 (홈)"
-        star = p - 1
-        if st.session_state.progress[track][star]:
-            mark = "✅"
-        elif is_unlocked(track, star):
-            mark = "⭐"
+    wrong = [i for i, ok in enumerate(t["a"]) if not ok]
+    if ph == "res":
+        pct = (10 - len(wrong)) * 10
+        header(sub, ["결과"], 0)
+        st.markdown(f"<div class='center'>{donut_svg(pct)}<h3>정답 {10 - len(wrong)}개 · "
+                    f"<span style='color:#2e9e5b'>정답률 {pct}%</span> · "
+                    f"<span style='color:#d9534f'>오답률 {100 - pct}%</span></h3></div>", unsafe_allow_html=True)
+        c = st.columns(2)
+        if wrong:
+            c[0].button("틀린 문제 복습", on_click=t_goto, args=("rev",), key="r_rev", width="stretch")
         else:
-            mark = "🔒"
-        return f"{mark} {p}. {stage_label(track, p)}"
+            c[0].success("모두 맞혔어요! 🎉")
+        c[1].button("홈으로 돌아가기", on_click=go_home, key="r_home", width="stretch")
+        return
 
-    st.radio("메뉴", list(range(8)), format_func=page_name, key="page")
-    st.toggle("🎙️ 마이크 없이 연습 (자가 평가)", key="self_mode")
-    st.divider()
-
-    all_scores = [s for name in TRACKS for s in st.session_state.stage_scores[name] if s is not None]
-    st.metric("⭐ 학습 점수", f"{sum(all_scores)}점")
-    st.metric("밝힌 별 (현재 트랙)", f"{sum(st.session_state.progress[track])} / 7")
-
-    if st.button("현재 트랙 진행 초기화"):
-        st.session_state.progress[track] = [False] * 7
-        st.session_state.stage_scores[track] = [None] * 7
-        for k in list(st.session_state.best):
-            if k.startswith(track + "|"):
-                del st.session_state.best[k]
-        for k in list(st.session_state.attempts):
-            if k.startswith(track + "|"):
-                del st.session_state.attempts[k]
-        for k in list(st.session_state.quiz_result):
-            if k.startswith(track + "_"):
-                del st.session_state.quiz_result[k]
-        st.session_state.goto = 0
-        st.rerun()
+    header(sub, ["틀린 문제 복습"], 0)
+    steps = sorted({Q[i]["s"] for i in wrong})
+    with st.container(border=True):
+        for si in steps:
+            qs = ", ".join(str(i + 1) for i in wrong if Q[i]["s"] == si)
+            c = st.columns([4, 2, 2])
+            c[0].markdown(f"**{STEPS[lang][si]}** · 틀린 문제 {qs}번")
+            c[1].button("개념 보기", on_click=t_jump, args=(si,), key=f"j{si}", width="stretch")
+            c[2].button("연습하기", on_click=t_jump, args=(si + 1,), key=f"jp{si}", width="stretch")
+    c = st.columns(2)
+    c[0].button("테스트 재응시", on_click=retake, key="retake", width="stretch")
+    c[1].button("홈으로 돌아가기", on_click=go_home, key="rv_home", width="stretch")
 
 
-# ------------------------------------------------------------
-# 13. 메인 화면
-# ------------------------------------------------------------
-flash = st.session_state.pop("flash", None)
-if flash:
-    st.toast(flash["msg"])
-    if flash["balloons"]:
-        st.balloons()
-
-html(f"""
-<div class="hero">
-<h1>language app</h1>
-<p>북두칠성을 모두 밝혀라 · 현재 트랙: <b>{TRACKS[track]['label']}</b></p>
-</div>
-""")
-
-html(dipper_svg(st.session_state.progress[track], star_labels(track)))
-
-page = st.session_state.page
-if page == 0:
-    page_home(track)
-else:
-    star_index = page - 1
-    if not is_unlocked(track, star_index):
-        st.warning("🔒 앞 단계의 별을 먼저 밝혀야 해요!")
-        first_open = next(i for i, d in enumerate(st.session_state.progress[track]) if not d)
-        if st.button("현재 단계로 이동 ▶"):
-            go_to(first_open + 1)
-    elif star_index == 6:
-        page_final(track)
-    elif star_index % 2 == 0:
-        page_practice_stage(track, star_index // 2, star_index)
-    else:
-        page_quiz_stage(track, star_index // 2, star_index)
-        
+# ------------------------------------------------------------------
+# 6. 화면 선택
+# ------------------------------------------------------------------
+SCREENS = {"start": screen_start, "home": screen_home, "step": screen_step,
+           "stepend": screen_stepend, "finale": screen_finale}
+SCREENS[ss.screen]()
