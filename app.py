@@ -156,7 +156,7 @@ def sky_html():
     """밤하늘 배경: 깜빡이는 작은 별들"""
     rnd = random.Random(7)
     parts = []
-    for _ in range(90):
+    for _ in range(45):
         x, y = rnd.uniform(0, 100), rnd.uniform(0, 100)
         size = rnd.choice([2, 2, 3, 4])
         delay = rnd.uniform(0, 4)
@@ -361,6 +361,7 @@ def screen_finale():
 AUDIO_DIR = Path(__file__).parent / "audio"   # 원어민 녹음 파일을 넣는 폴더 (예: audio/가.mp3)
 
 
+@st.cache_data(show_spinner=False)
 def audio_uri(w):
     for ext, mime in (("mp3", "audio/mpeg"), ("wav", "audio/wav"), ("m4a", "audio/mp4"), ("ogg", "audio/ogg")):
         f = AUDIO_DIR / f"{w}.{ext}"
@@ -378,15 +379,23 @@ def listen(words, lang="en-US", hide=False):
               "var u=new SpeechSynthesisUtterance(b.dataset.t);u.lang='" + lang + "';u.rate=0.7;"
               "var v=speechSynthesis.getVoices().filter(function(x){return x.lang.replace('_','-').indexOf('" + lang[:2] + "')==0;});"
               "if(v.length)u.voice=v[0];speechSynthesis.speak(u);}")
-    components.html("<style>button{background:#7B1E2E;color:#fff;border:0;border-radius:10px;padding:8px 14px;"
-                    "margin:3px;font-size:15px;cursor:pointer}</style>" + btns + "<script>" + script + "</script>",
-                    height=52 if len(words) <= 3 else 100)
+    doc = ("<style>button{background:#7B1E2E;color:#fff;border:0;border-radius:10px;padding:8px 14px;"
+           "margin:3px;font-size:15px;cursor:pointer}</style>" + btns + "<script>" + script + "</script>")
+    h = 52 if len(words) <= 3 else 100
+    try:
+        components.html(doc, height=h)
+    except Exception:
+        try:
+            st.html(doc, unsafe_allow_javascript=True)
+        except Exception as e:
+            st.caption("소리 재생 버튼을 불러오지 못했어요: " + str(e)[:150])
 
 
-def envelope(audio, n=40):
+@st.cache_data(show_spinner=False)
+def _env(raw, n=40):
     """녹음 소리의 크기 변화(40칸)를 구해요"""
     try:
-        w = wave.open(io.BytesIO(audio.getvalue()))
+        w = wave.open(io.BytesIO(raw))
         ch, raw = w.getnchannels(), w.readframes(w.getnframes())
         x = [abs(v) for v in struct.unpack("<%dh" % (len(raw) // 2), raw)][::ch]
         size = max(1, len(x) // n)
@@ -395,6 +404,10 @@ def envelope(audio, n=40):
         return [v / m for v in e], len(x) / w.getframerate()
     except Exception:
         return None, 0
+
+
+def envelope(audio, n=40):
+    return _env(audio.getvalue(), n)
 
 
 def bump(amp, length, n=40):
