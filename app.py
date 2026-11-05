@@ -228,6 +228,17 @@ def inject_css(dark):
         st.markdown(sky_html(), unsafe_allow_html=True)
 
 
+def debug_box():
+    """주소 끝에 ?debug=1 을 붙여 열면, 서버가 녹음 파일을 찾았는지 보여 줘요."""
+    if "debug" not in st.query_params:
+        return
+    idx = audio_index()
+    st.info("녹음 파일 인식: **%d개** · 이.mp3 %s · 폴더 확인: %s" % (
+        len(idx), "있음" if "이" in idx else "없음",
+        " / ".join(f"{d.parent.name}/{d.name}={'있음' if d.exists() else '없음'}" for d in AUDIO_DIRS)))
+    st.caption("앱 위치: " + str(Path(__file__).parent))
+
+
 def nav_row(left=None, mid=None, right=None):
     """버튼 한 줄: 왼쪽/가운데/오른쪽 칸에 하나씩 놓아요. 각 값은 (글자, 함수, args, key)"""
     cols = st.columns([2, 3, 2])
@@ -248,6 +259,7 @@ def top_bar(title=""):
 # 5. 주요 화면 렌더링
 # ------------------------------------------------------------------
 def screen_start():
+    debug_box()
     inject_css(dark=True)
     st.markdown("<div style='height:9vh'></div>", unsafe_allow_html=True)
     st.markdown(bear_svg(120), unsafe_allow_html=True)
@@ -264,6 +276,7 @@ def screen_start():
 
 
 def screen_home():
+    debug_box()
     inject_css(dark=False)
     d = ss.data
     lang = ss.lang
@@ -347,7 +360,7 @@ AUDIO_DIRS = [Path(__file__).parent / "static" / "audio", Path(__file__).parent 
 MIMES = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".ogg": "audio/ogg"}
 
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=False, ttl=30)
 def audio_index():
     idx = {}
     for d in AUDIO_DIRS:
@@ -358,7 +371,7 @@ def audio_index():
     return idx
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=60)
 def audio_bytes(w):
     f = audio_index().get(unicodedata.normalize("NFC", w))
     return (f.read_bytes(), MIMES[f.suffix.lower()]) if f else (None, None)
@@ -367,7 +380,7 @@ def audio_bytes(w):
 SAY_AS = {"lice": "head lice"}
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=60)
 def audio_uri(w):
     data, mime = audio_bytes(w)
     return f"data:{mime};base64," + base64.b64encode(data).decode() if data else ""
