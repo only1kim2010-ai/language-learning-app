@@ -356,7 +356,7 @@ def screen_finale():
 # ------------------------------------------------------------------
 # 6. 오디오 및 텍스트 툴 (MP3 우선 재생 및 TTS 폴백 적용)
 # ------------------------------------------------------------------
-AUDIO_DIRS = [
+ [AUDIO_DIRS =
     Path(__file__).parent,
     Path(__file__).parent / "static" / "audio",
     Path(__file__).parent / "audio"
