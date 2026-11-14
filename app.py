@@ -329,19 +329,6 @@ def screen_start():
     )
 
     st.markdown(
-        f"""
-        <div style="text-align: center;">
-            <img
-                src="data:image/png;base64,{image_data}"
-                width="340"
-                style="display: block; margin: auto;"
-            >
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
         """
         <h1 class='center' style='font-size:2.3rem;margin:0.3rem 0'>
             발음 오류 수정 프로그램
@@ -425,18 +412,6 @@ def screen_home():
     )
 
     # 북두칠성과 학습 단계
-    image_data = base64.b64encode(START_BEAR_IMG.read_bytes()).decode("utf-8")
-    st.markdown(
-        f"""
-        <div style="text-align: center; margin: 15px 0;">
-            <img src="data:image/png;base64,{image_data}"
-                 width="250"
-                 style="display: block; margin: auto;">
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
     blink = None
     if ss.resume and ss.resume[0] == lang:
         blink = ss.resume[1]
@@ -738,24 +713,14 @@ def sentence_intonation_svg():
 
 
 def render_r_l_gif():
-    gif_file = Path(__file__).parent / "KakaoTalk_20261105_101402840_02.gif"
-
-    try:
-        if gif_file.exists():
-            st.image(
-                str(gif_file),
-                caption="⚡ /r/과 /l/ 발음 시 혀의 위치와 움직임",
-                use_container_width=True
-            )
-        else:
-            raise FileNotFoundError
-
-    except Exception:
-        st.markdown(
-            tongue_svg("r") + tongue_svg("l"),
-            unsafe_allow_html=True
-        )
-        st.caption("발음 도식: /r/은 혀끝이 윗잇몸에 닿지 않고, /l/은 혀끝이 윗잇몸에 닿아요.")
+    st.markdown(
+        tongue_svg("r") + tongue_svg("l"),
+        unsafe_allow_html=True
+    )
+    st.caption(
+        "발음 도식: /r/은 혀끝이 윗잇몸에 닿지 않고, "
+        "/l/은 혀끝이 윗잇몸에 닿아요."
+    )
 
 def tongue_svg(kind):
     kind = kind.lower()
@@ -848,42 +813,29 @@ RL_ITEMS = [
 
 RL_PAGES = [
     dict(
-        t="두 단어의 차이를 들어보세요!",
+        t="두 단어의 차이와 발음 원리 이해하기",
         lines=[
-            "Right와 Light의 발음에서 어떤 소리가 더 입 안쪽에서 만들어질까요?",
-            "**Right** /raɪt/ : 오른쪽",
-            "**Light** /laɪt/ : 빛"
-        ],
-        words=["right", "light"],
-        vis=lambda: (
-            big("Right /raɪt/", 2.2)
-            + "<p class='center'>오른쪽</p>"
-            + big("Light /laɪt/", 2.2)
-            + "<p class='center'>빛</p>"
-        ),
-        tab="소리 비교",
-        tip="두 단어를 번갈아 듣고 /r/과 /l/의 차이를 찾아보세요."
-    ),
-    dict(
-        t="발음 원리 이해하기",
-        lines=[
+            "Right와 Light의 발음에서 어떤 차이가 있을까요?",
+            "**Right /raɪt/** : 오른쪽",
+            "**Light /laɪt/** : 빛",
+            "",
             "**/l/ 발음**",
             "• 혀끝을 윗앞니 뒤쪽의 윗잇몸에 붙여요.",
             "• 공기가 혀의 양옆으로 빠져나가요.",
-            "• 예시: light, lice, loud",
             "",
             "**/r/ 발음**",
             "• 혀끝이 윗잇몸에 닿지 않아요.",
-            "• 혀끝을 살짝 말거나 혀 가운데를 뒤쪽으로 모아요.",
-            "• 입술을 살짝 둥글게 만들 수 있어요.",
-            "• 예시: right, rice, red"
+            "• 혀를 살짝 말거나 혀 가운데를 뒤쪽으로 모아요.",
+            "• 입술을 살짝 둥글게 만들 수 있어요."
         ],
         words=["right", "light"],
         vis=render_r_l_gif,
-        tab="발음 원리",
-        tip="/l/은 혀끝을 윗잇몸에 닿게 하고, /r/은 혀가 윗잇몸에 닿지 않도록 주의하세요."
+        tab="소리 비교와 발음 원리",
+        tip="/l/은 혀끝이 윗잇몸에 닿고, /r/은 닿지 않는다는 차이를 기억하세요."
     )
 ]
+
+
 EI_PAGES = [
     dict(t="eat과 it의 길이가 달라요",
          lines=["**eat** /iː/: 길고 혀가 높아요. 입은 작게 벌려요.", "**it** /ɪ/: 짧고 혀가 조금 낮아요.",
@@ -997,26 +949,6 @@ def render_concept(pages, lang="en-US"):
     nav_row(left=("← 이전", pg_move, (-1,), f"pv{pg}") if pg > 0 else None,
             right=("다음 →", pg_move, (1,), f"nx{pg}") if pg < n - 1 else ("개념 완료 ✓", finish_step, (), "cdone"))
 
-def rl_item(w, mean, pos, kind):
-    if kind == "r":
-        tip, wrong = "r은 혀끝이 입천장에 닿지 않고 뒤로 말려요.", "l처럼 혀끝이 윗잇몸에 닿았어요."
-        ask, model = "혀끝이 어디에 닿았나요? 닿지 않게 다시 해 볼까요?", "입술을 살짝 모으고 혀를 뒤로 당기며 시작해요."
-    elif kind == "l":
-        tip, wrong = "l은 혀끝이 윗잇몸에 닿아요.", "r처럼 혀끝이 닿지 않았어요."
-        ask, model = "혀끝이 윗잇몸에 닿았나요? 다시 해 볼까요?", "혀끝을 윗잇몸에 딱 붙인 채 소리를 내요."
-    else:
-        tip, wrong = "r과 l을 구분해서 말해요.", "r과 l 중 일부가 같은 소리로 들렸어요."
-        ask, model = "어느 소리가 r이고 어느 소리가 l인지 다시 확인해 볼까요?", "r은 혀를 말고, l은 혀끝을 윗잇몸에 붙여요."
-    return dict(w=w, mean=mean, pos=pos, tip=tip, wrong=wrong, ask=ask, model=model)
-
-RL_ITEMS = [
-    rl_item("Right / Light", "오른쪽 / 빛", "1단계 (단어)", "b"),
-    rl_item("Rice / Lice", "쌀 / 이", "2단계 (단어)", "b"),
-    rl_item("Curriculum", "교육과정", "3단계 (단어 내부)", "b"),
-    rl_item("Charging bus card", "버스 카드 충전", "4단계 (구 단위)", "b"),
-    rl_item("There are a lot of people.", "사람이 많아요", "5단계 (문장 단위)", "b")
-]
-
 EI_PAIRS = [("bed", "침대", "/bɛd/", "bid", "입찰", "/bɪd/"), ("pen", "펜", "/pɛn/", "pin", "핀", "/pɪn/"),
             ("set", "놓다", "/sɛt/", "sit", "앉다", "/sɪt/"),
             ("pet", "반려동물", "/pɛt/", "pit", "구덩이", "/pɪt/"), ("bet", "내기", "/bɛt/", "bit", "조금", "/bɪt/")]
@@ -1070,13 +1002,11 @@ def practice_rec(it, idx):
         unsafe_allow_html=True
     )
 
-    # 뜻, 품사, IPA 구분
+    # 뜻만 표시
     st.markdown(
         f"""
         <div style="text-align:center; line-height:2;">
             <div>📖 뜻: {it['mean']}</div>
-            <div>🏷️ 유형: {it['pos']}</div>
-            <div>🔤 IPA: {it['ipa']}</div>
         </div>
         """,
         unsafe_allow_html=True
