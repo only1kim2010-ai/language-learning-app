@@ -1002,15 +1002,7 @@ def practice_rec(it, idx):
         unsafe_allow_html=True
     )
 
-    # 뜻만 표시
-    st.markdown(
-        f"""
-        <div style="text-align:center; line-height:2;">
-            <div>📖 뜻: {it['mean']}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+
 
     if it.get("q"):
         st.markdown(
@@ -1521,6 +1513,8 @@ for _pages, _tabs, _tips in (
 ):
     for _p, _t, _tip in zip(_pages, _tabs, _tips):
         _p["tab"], _p["tip"] = _t, _tip
+KO_VOW_PAGES[1].pop("tip", None)
+KO_VOW_PAGES[3]["tip"] = "활음(/w/)이 약해지거나 바뀌지 않게 주의해요."        
 
 
 def ko_item(w, mean, pos, tip, q="", checks=None):
