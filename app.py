@@ -329,6 +329,19 @@ def screen_start():
     )
 
     st.markdown(
+        f"""
+        <div style="text-align: center;">
+            <img
+                src="data:image/png;base64,{image_data}"
+                width="340"
+                style="display: block; margin: auto;"
+            >
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
         """
         <h1 class='center' style='font-size:2.3rem;margin:0.3rem 0'>
             발음 오류 수정 프로그램
@@ -412,6 +425,18 @@ def screen_home():
     )
 
     # 북두칠성과 학습 단계
+    image_data = base64.b64encode(START_BEAR_IMG.read_bytes()).decode("utf-8")
+    st.markdown(
+        f"""
+        <div style="text-align: center; margin: 15px 0;">
+            <img src="data:image/png;base64,{image_data}"
+                 width="250"
+                 style="display: block; margin: auto;">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
     blink = None
     if ss.resume and ss.resume[0] == lang:
         blink = ss.resume[1]
@@ -713,14 +738,24 @@ def sentence_intonation_svg():
 
 
 def render_r_l_gif():
-    st.markdown(
-        tongue_svg("r") + tongue_svg("l"),
-        unsafe_allow_html=True
-    )
-    st.caption(
-        "발음 도식: /r/은 혀끝이 윗잇몸에 닿지 않고, "
-        "/l/은 혀끝이 윗잇몸에 닿아요."
-    )
+    gif_file = Path(__file__).parent / "KakaoTalk_20261105_101402840_02.gif"
+
+    try:
+        if gif_file.exists():
+            st.image(
+                str(gif_file),
+                caption="⚡ /r/과 /l/ 발음 시 혀의 위치와 움직임",
+                use_container_width=True
+            )
+        else:
+            raise FileNotFoundError
+
+    except Exception:
+        st.markdown(
+            tongue_svg("r") + tongue_svg("l"),
+            unsafe_allow_html=True
+        )
+        st.caption("발음 도식: /r/은 혀끝이 윗잇몸에 닿지 않고, /l/은 혀끝이 윗잇몸에 닿아요.")
 
 def tongue_svg(kind):
     kind = kind.lower()
@@ -802,24 +837,52 @@ def rl_item(w, mean, pos, ipa, kind):
     )
 
 
+RL_ITEMS = [
+    rl_item("Right / Light", "오른쪽 / 빛", "1단계 (단어)", "/raɪt/ vs /laɪt/", "b"),
+    rl_item("Rice / Lice", "쌀 / 이", "2단계 (단어)", "/raɪs/ vs /laɪs/", "b"),
+    rl_item("Curriculum", "교육과정", "3단계 (단어 내부)", "/kəˈrɪkjələm/", "b"),
+    rl_item("Charging bus card", "버스 카드 충전하기", "4단계 (구 단위)", "/ˈtʃɑːrdʒɪŋ bʌs kɑːrd/", "b"),
+    rl_item("There are a lot of people.", "여기에는 많은 사람들이 있어요.", "5단계 (문장 단위)", "/ðɛr ɑːr ə lɒt əv ˈpiːpəl/", "b")
+]
+
+
 RL_PAGES = [
     dict(
         t="두 단어의 차이를 들어보세요!",
         lines=[
             "Right와 Light의 발음에서 어떤 소리가 더 입 안쪽에서 만들어질까요?",
-            "**Right** : 오른쪽",
-            "**Light** : 빛"
+            "**Right** /raɪt/ : 오른쪽",
+            "**Light** /laɪt/ : 빛"
         ],
         words=["right", "light"],
         vis=lambda: (
-            big("Right", 2.2)
+            big("Right /raɪt/", 2.2)
             + "<p class='center'>오른쪽</p>"
-            + big("Light", 2.2)
+            + big("Light /laɪt/", 2.2)
             + "<p class='center'>빛</p>"
         ),
         tab="소리 비교",
-        tip="두 단어의 소리를 번갈아 듣고 차이를 찾아보세요."
+        tip="두 단어를 번갈아 듣고 /r/과 /l/의 차이를 찾아보세요."
     ),
+    dict(
+        t="발음 원리 이해하기",
+        lines=[
+            "**/l/ 발음**",
+            "• 혀끝을 윗앞니 뒤쪽의 윗잇몸에 붙여요.",
+            "• 공기가 혀의 양옆으로 빠져나가요.",
+            "• 예시: light, lice, loud",
+            "",
+            "**/r/ 발음**",
+            "• 혀끝이 윗잇몸에 닿지 않아요.",
+            "• 혀끝을 살짝 말거나 혀 가운데를 뒤쪽으로 모아요.",
+            "• 입술을 살짝 둥글게 만들 수 있어요.",
+            "• 예시: right, rice, red"
+        ],
+        words=["right", "light"],
+        vis=render_r_l_gif,
+        tab="발음 원리",
+        tip="/l/은 혀끝을 윗잇몸에 닿게 하고, /r/은 혀가 윗잇몸에 닿지 않도록 주의하세요."
+    )
 ]
 EI_PAGES = [
     dict(t="eat과 it의 길이가 달라요",
@@ -899,6 +962,40 @@ def pg_move(d):
     ss.page += d
 
 
+def render_concept(pages, lang="en-US"):
+    slide_css()
+    n = len(pages)
+    pg = min(ss.page, n - 1)
+    P = pages[pg]
+    header(("영어" if ss.lang == "en" else "한국어") + " 발음 교실", [f"{k + 1:02d} {q['tab']}" for k, q in enumerate(pages)], pg)
+    with st.container(border=True):
+        st.markdown(f"<h2 style='color:{BURGUNDY};margin:0 0 6px'>{P['t']}</h2>", unsafe_allow_html=True)
+        if callable(P.get("vis")):
+            L, R = st.columns([5, 6])
+            with L:
+                for line in P["lines"]:
+                    st.markdown(line)
+                listen(P["words"], lang)
+            with R:
+                st.markdown(P["vis"](), unsafe_allow_html=True)
+        else:
+            for line in P["lines"]:
+                st.markdown(line)
+            listen(P["words"], lang)
+    image_data = base64.b64encode(HINT_BEAR_IMG.read_bytes()).decode("utf-8")
+    st.markdown(
+        f"""
+        <div class='tip'>
+            <img src="data:image/png;base64,{image_data}"
+                 style="width:28px; height:auto; vertical-align:middle; margin-right:3px;">
+            {P['tip']}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )   
+    
+    nav_row(left=("← 이전", pg_move, (-1,), f"pv{pg}") if pg > 0 else None,
+            right=("다음 →", pg_move, (1,), f"nx{pg}") if pg < n - 1 else ("개념 완료 ✓", finish_step, (), "cdone"))
 
 def rl_item(w, mean, pos, kind):
     if kind == "r":
@@ -978,6 +1075,8 @@ def practice_rec(it, idx):
         f"""
         <div style="text-align:center; line-height:2;">
             <div>📖 뜻: {it['mean']}</div>
+            <div>🏷️ 유형: {it['pos']}</div>
+            <div>🔤 IPA: {it['ipa']}</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -1187,8 +1286,6 @@ def render_practice(items, fn):
         ss.pi = 0
         ss.ps = {}
 
-    if ss.pi >= len(act):
-        weak = [i for i in act if ss.ps.get(i, 0) < 60]   
     if ss.pi >= len(act):
         weak = [i for i in act if ss.ps.get(i, 0) < 60]
         st.markdown(f"<h2 class='center' style='color:{BURGUNDY}'>연습 끝!</h2>", unsafe_allow_html=True)
